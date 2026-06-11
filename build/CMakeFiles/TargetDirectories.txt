@@ -1,0 +1,3 @@
+/home/danila/projects/mashiko/build/CMakeFiles/mashiko.dir
+/home/danila/projects/mashiko/build/CMakeFiles/edit_cache.dir
+/home/danila/projects/mashiko/build/CMakeFiles/rebuild_cache.dir

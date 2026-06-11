@@ -1,0 +1,8 @@
+
+
+public abstract class Addable {
+    type Output;
+
+    static add(lhs: Self, rhs: Self): Self.Output;
+}
+

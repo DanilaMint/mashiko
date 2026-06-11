@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/danila/projects/mashiko/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
