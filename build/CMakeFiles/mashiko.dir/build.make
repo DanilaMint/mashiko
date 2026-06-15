@@ -76,80 +76,32 @@ CMakeFiles/mashiko.dir/src/main.cpp.o: CMakeFiles/mashiko.dir/flags.make
 CMakeFiles/mashiko.dir/src/main.cpp.o: /home/danila/projects/mashiko/src/main.cpp
 CMakeFiles/mashiko.dir/src/main.cpp.o: CMakeFiles/mashiko.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/mashiko.dir/src/main.cpp.o"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mashiko.dir/src/main.cpp.o -MF CMakeFiles/mashiko.dir/src/main.cpp.o.d -o CMakeFiles/mashiko.dir/src/main.cpp.o -c /home/danila/projects/mashiko/src/main.cpp
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mashiko.dir/src/main.cpp.o -MF CMakeFiles/mashiko.dir/src/main.cpp.o.d -o CMakeFiles/mashiko.dir/src/main.cpp.o -c /home/danila/projects/mashiko/src/main.cpp
 
 CMakeFiles/mashiko.dir/src/main.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mashiko.dir/src/main.cpp.i"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/danila/projects/mashiko/src/main.cpp > CMakeFiles/mashiko.dir/src/main.cpp.i
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/danila/projects/mashiko/src/main.cpp > CMakeFiles/mashiko.dir/src/main.cpp.i
 
 CMakeFiles/mashiko.dir/src/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mashiko.dir/src/main.cpp.s"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/danila/projects/mashiko/src/main.cpp -o CMakeFiles/mashiko.dir/src/main.cpp.s
-
-CMakeFiles/mashiko.dir/src/misc/pos.cpp.o: CMakeFiles/mashiko.dir/flags.make
-CMakeFiles/mashiko.dir/src/misc/pos.cpp.o: /home/danila/projects/mashiko/src/misc/pos.cpp
-CMakeFiles/mashiko.dir/src/misc/pos.cpp.o: CMakeFiles/mashiko.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/mashiko.dir/src/misc/pos.cpp.o"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mashiko.dir/src/misc/pos.cpp.o -MF CMakeFiles/mashiko.dir/src/misc/pos.cpp.o.d -o CMakeFiles/mashiko.dir/src/misc/pos.cpp.o -c /home/danila/projects/mashiko/src/misc/pos.cpp
-
-CMakeFiles/mashiko.dir/src/misc/pos.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mashiko.dir/src/misc/pos.cpp.i"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/danila/projects/mashiko/src/misc/pos.cpp > CMakeFiles/mashiko.dir/src/misc/pos.cpp.i
-
-CMakeFiles/mashiko.dir/src/misc/pos.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mashiko.dir/src/misc/pos.cpp.s"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/danila/projects/mashiko/src/misc/pos.cpp -o CMakeFiles/mashiko.dir/src/misc/pos.cpp.s
-
-CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o: CMakeFiles/mashiko.dir/flags.make
-CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o: /home/danila/projects/mashiko/src/parser/char_iter.cpp
-CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o: CMakeFiles/mashiko.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o -MF CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o.d -o CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o -c /home/danila/projects/mashiko/src/parser/char_iter.cpp
-
-CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.i"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/danila/projects/mashiko/src/parser/char_iter.cpp > CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.i
-
-CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.s"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/danila/projects/mashiko/src/parser/char_iter.cpp -o CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.s
-
-CMakeFiles/mashiko.dir/src/parser/parser.cpp.o: CMakeFiles/mashiko.dir/flags.make
-CMakeFiles/mashiko.dir/src/parser/parser.cpp.o: /home/danila/projects/mashiko/src/parser/parser.cpp
-CMakeFiles/mashiko.dir/src/parser/parser.cpp.o: CMakeFiles/mashiko.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/mashiko.dir/src/parser/parser.cpp.o"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mashiko.dir/src/parser/parser.cpp.o -MF CMakeFiles/mashiko.dir/src/parser/parser.cpp.o.d -o CMakeFiles/mashiko.dir/src/parser/parser.cpp.o -c /home/danila/projects/mashiko/src/parser/parser.cpp
-
-CMakeFiles/mashiko.dir/src/parser/parser.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mashiko.dir/src/parser/parser.cpp.i"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/danila/projects/mashiko/src/parser/parser.cpp > CMakeFiles/mashiko.dir/src/parser/parser.cpp.i
-
-CMakeFiles/mashiko.dir/src/parser/parser.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mashiko.dir/src/parser/parser.cpp.s"
-	/usr/bin/clang++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/danila/projects/mashiko/src/parser/parser.cpp -o CMakeFiles/mashiko.dir/src/parser/parser.cpp.s
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/danila/projects/mashiko/src/main.cpp -o CMakeFiles/mashiko.dir/src/main.cpp.s
 
 # Object files for target mashiko
 mashiko_OBJECTS = \
-"CMakeFiles/mashiko.dir/src/main.cpp.o" \
-"CMakeFiles/mashiko.dir/src/misc/pos.cpp.o" \
-"CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o" \
-"CMakeFiles/mashiko.dir/src/parser/parser.cpp.o"
+"CMakeFiles/mashiko.dir/src/main.cpp.o"
 
 # External object files for target mashiko
 mashiko_EXTERNAL_OBJECTS =
 
-bin/mashiko: CMakeFiles/mashiko.dir/src/main.cpp.o
-bin/mashiko: CMakeFiles/mashiko.dir/src/misc/pos.cpp.o
-bin/mashiko: CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o
-bin/mashiko: CMakeFiles/mashiko.dir/src/parser/parser.cpp.o
-bin/mashiko: CMakeFiles/mashiko.dir/build.make
-bin/mashiko: CMakeFiles/mashiko.dir/compiler_depend.ts
-bin/mashiko: CMakeFiles/mashiko.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Linking CXX executable bin/mashiko"
+mashiko: CMakeFiles/mashiko.dir/src/main.cpp.o
+mashiko: CMakeFiles/mashiko.dir/build.make
+mashiko: CMakeFiles/mashiko.dir/compiler_depend.ts
+mashiko: CMakeFiles/mashiko.dir/link.txt
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable mashiko"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/mashiko.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.
-CMakeFiles/mashiko.dir/build: bin/mashiko
+CMakeFiles/mashiko.dir/build: mashiko
 .PHONY : CMakeFiles/mashiko.dir/build
 
 CMakeFiles/mashiko.dir/clean:

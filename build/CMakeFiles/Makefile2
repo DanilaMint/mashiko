@@ -85,12 +85,12 @@ clean: CMakeFiles/mashiko.dir/clean
 CMakeFiles/mashiko.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=1,2,3,4,5 "Built target mashiko"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=1,2 "Built target mashiko"
 .PHONY : CMakeFiles/mashiko.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/mashiko.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/danila/projects/mashiko/build/CMakeFiles 5
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/danila/projects/mashiko/build/CMakeFiles 2
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/mashiko.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/danila/projects/mashiko/build/CMakeFiles 0
 .PHONY : CMakeFiles/mashiko.dir/rule
@@ -102,7 +102,7 @@ mashiko: CMakeFiles/mashiko.dir/rule
 # codegen rule for target.
 CMakeFiles/mashiko.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=1,2,3,4,5 "Finished codegen for target mashiko"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/danila/projects/mashiko/build/CMakeFiles --progress-num=1,2 "Finished codegen for target mashiko"
 .PHONY : CMakeFiles/mashiko.dir/codegen
 
 # clean rule for target.

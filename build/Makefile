@@ -153,78 +153,6 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
-src/misc/pos.o: src/misc/pos.cpp.o
-.PHONY : src/misc/pos.o
-
-# target to build an object file
-src/misc/pos.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/misc/pos.cpp.o
-.PHONY : src/misc/pos.cpp.o
-
-src/misc/pos.i: src/misc/pos.cpp.i
-.PHONY : src/misc/pos.i
-
-# target to preprocess a source file
-src/misc/pos.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/misc/pos.cpp.i
-.PHONY : src/misc/pos.cpp.i
-
-src/misc/pos.s: src/misc/pos.cpp.s
-.PHONY : src/misc/pos.s
-
-# target to generate assembly for a file
-src/misc/pos.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/misc/pos.cpp.s
-.PHONY : src/misc/pos.cpp.s
-
-src/parser/char_iter.o: src/parser/char_iter.cpp.o
-.PHONY : src/parser/char_iter.o
-
-# target to build an object file
-src/parser/char_iter.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o
-.PHONY : src/parser/char_iter.cpp.o
-
-src/parser/char_iter.i: src/parser/char_iter.cpp.i
-.PHONY : src/parser/char_iter.i
-
-# target to preprocess a source file
-src/parser/char_iter.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.i
-.PHONY : src/parser/char_iter.cpp.i
-
-src/parser/char_iter.s: src/parser/char_iter.cpp.s
-.PHONY : src/parser/char_iter.s
-
-# target to generate assembly for a file
-src/parser/char_iter.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.s
-.PHONY : src/parser/char_iter.cpp.s
-
-src/parser/parser.o: src/parser/parser.cpp.o
-.PHONY : src/parser/parser.o
-
-# target to build an object file
-src/parser/parser.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/parser.cpp.o
-.PHONY : src/parser/parser.cpp.o
-
-src/parser/parser.i: src/parser/parser.cpp.i
-.PHONY : src/parser/parser.i
-
-# target to preprocess a source file
-src/parser/parser.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/parser.cpp.i
-.PHONY : src/parser/parser.cpp.i
-
-src/parser/parser.s: src/parser/parser.cpp.s
-.PHONY : src/parser/parser.s
-
-# target to generate assembly for a file
-src/parser/parser.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/mashiko.dir/build.make CMakeFiles/mashiko.dir/src/parser/parser.cpp.s
-.PHONY : src/parser/parser.cpp.s
-
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -237,15 +165,6 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
-	@echo "... src/misc/pos.o"
-	@echo "... src/misc/pos.i"
-	@echo "... src/misc/pos.s"
-	@echo "... src/parser/char_iter.o"
-	@echo "... src/parser/char_iter.i"
-	@echo "... src/parser/char_iter.s"
-	@echo "... src/parser/parser.o"
-	@echo "... src/parser/parser.i"
-	@echo "... src/parser/parser.s"
 .PHONY : help
 
 

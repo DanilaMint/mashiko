@@ -1,1 +1,1 @@
-/usr/bin/clang++ -Xlinker --dependency-file=CMakeFiles/mashiko.dir/link.d CMakeFiles/mashiko.dir/src/main.cpp.o CMakeFiles/mashiko.dir/src/misc/pos.cpp.o CMakeFiles/mashiko.dir/src/parser/char_iter.cpp.o CMakeFiles/mashiko.dir/src/parser/parser.cpp.o -o bin/mashiko
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/mashiko.dir/link.d CMakeFiles/mashiko.dir/src/main.cpp.o -o mashiko
