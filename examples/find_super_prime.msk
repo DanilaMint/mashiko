@@ -1,0 +1,28 @@
+
+func isPrime(n : Int): Bool {
+    if n < 2 { return false; }
+    acc = 2;
+    while acc * acc <= n {
+        if n % acc == 0 { return false; }
+    }
+    return true;
+}
+
+func getSuperPrimes(count: Int): DynArray<Int> {
+    primes = DynArray();
+
+    acc = 1;
+    prime_acc = 0;
+
+    while primes.len() < count {
+        if isPrime(acc) {
+            prime_acc += 1;
+            if isPrime(prime_acc) {
+                primes.push(acc);
+            }
+        }
+        acc += 1;
+    }
+
+    return primes;
+}

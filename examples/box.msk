@@ -1,0 +1,11 @@
+
+
+template<type T, system A: Allocator>
+class Box {
+    ptr: Ptr<T>;
+
+    constructor(x: T) {
+        ptr = A.alloc();
+        if ptr == 0 {}
+    }
+}

@@ -1,0 +1,197 @@
+// mashiko.lark — грамматика языка mashiko для lark.
+//
+// Подключение: parser.py → Lark.open("mashiko.lark", parser="earley").
+// Токены приходят от нашего lexer.py. lark сопоставляет их с терминалами
+// по имени: TokenType.name (FUNC, IF, IDENT, INT, LPAREN, ...) == ИМЯ_ТЕРМИНАЛА.
+//
+// При external-токенах паттерны терминалов НЕ используются рантайм-лекером —
+// на их месте lark просто видит готовые токены по имени. Поэтому ниже
+// паттерны для IDENT/INT/FLOAT/STRING/CHAR — placeholder'ы (regex для
+// Earley-матчера, должен совпадать с тем, что выдаёт lexer.py).
+// Для односимвольных/литеральных терминалов паттерн — сам токен.
+
+
+// =============================================================
+// СЕКЦИЯ 1: ТЕРМИНАЛЫ (имена = TokenType.name из lexer.py)
+// =============================================================
+
+// --- Ключевые слова ---
+FUNC: "func"
+IF: "if"
+ELSE: "else"
+WHILE: "while"
+FOR: "for"
+RETURN: "return"
+BREAK: "break"
+CONTINUE: "continue"
+TRUE: "true"
+FALSE: "false"
+
+// --- Литералы и идентификаторы ---
+IDENT: /[a-zA-Z_][a-zA-Z0-9_]*/
+INT: /(0x[0-9a-fA-F]+|0b[01]+|\d+)/
+FLOAT: /\d+\.\d*([eE][+-]?\d+)?/
+STRING: /"(\\.|[^"\\])*"/
+CHAR: /'(\\.|[^'\\])'/
+
+// --- Пунктуация ---
+LPAREN: "("
+RPAREN: ")"
+LBRACE: "{"
+RBRACE: "}"
+LBRACKET: "["
+RBRACKET: "]"
+COLON: ":"
+SEMICOLON: ";"
+COMMA: ","
+DOT: "."
+
+// --- Арифметика (regex — чтобы были именованными и не фильтровались из дерева) ---
+PLUS: /\+/
+MINUS: /-/
+STAR: /\*/
+SLASH: /\//
+PERCENT: /%/
+
+// --- Присваивание ---
+EQ: /=/
+PLUS_EQ: /\+=/
+MINUS_EQ: /-=/
+STAR_EQ: /\*=/
+SLASH_EQ: /\/=/
+PERCENT_EQ: /%=/
+
+// --- Сравнение ---
+EQEQ: /==/
+BANG_EQ: /!=/
+LE: /<=/
+GE: />=/
+LANGLE: /</
+RANGLE: />/
+
+// --- Логика и побитовые ---
+BANG: /!/
+AMP_AMP: /&&/
+PIPE_PIPE: /\|\|/
+AMP: /&/
+PIPE: /\|/
+CARET: /\^/
+TILDE: /~/
+MAYBE: /\?/
+
+// =============================================================
+// СЕКЦИЯ 2: ПРАВИЛА
+// =============================================================
+
+// TYPE живёт только в типовой позиции (после :, в generic args,
+// return anno, refinement). Поэтому LANGLE/RANGLE в нём не конфликтуют
+// с comparison-операторами в expression.
+?type: simple_type | tuple_type | generic_type | maybe_type | refinement_type
+simple_type: IDENT
+tuple_type: LPAREN [type (COMMA type)*] RPAREN
+generic_type: IDENT LANGLE type (COMMA type)* RANGLE
+maybe_type: type MAYBE
+refinement_type: LBRACE type COLON expression RBRACE
+
+// Выражения — priority ladder (от низкого приоритета к высокому).
+// `?` в верху каждой ступени: если ступень свелась к единственному
+// подвыражению, дерево подставляется в родителя "прозрачно".
+// Каждый бинарный оператор имеет свой класс приоритета; правила
+// формируют left-associative цепочку через left-recursion.
+
+?expression: conditional
+?conditional: or_expr
+            | or_expr IF or_expr ELSE conditional  -> conditional
+
+?or_expr: or_expr PIPE_PIPE and_expr  -> binary_op
+        | and_expr
+?and_expr: and_expr AMP_AMP bit_or_expr  -> binary_op
+         | bit_or_expr
+?bit_or_expr: bit_or_expr PIPE bit_xor_expr  -> binary_op
+            | bit_xor_expr
+?bit_xor_expr: bit_xor_expr CARET bit_and_expr  -> binary_op
+              | bit_and_expr
+?bit_and_expr: bit_and_expr AMP equality_expr  -> binary_op
+             | equality_expr
+?equality_expr: equality_expr EQEQ comparison_expr  -> binary_op
+              | equality_expr BANG_EQ comparison_expr  -> binary_op
+              | comparison_expr
+?comparison_expr: comparison_expr LANGLE additive_expr  -> binary_op
+                | comparison_expr RANGLE additive_expr  -> binary_op
+                | comparison_expr LE additive_expr  -> binary_op
+                | comparison_expr GE additive_expr  -> binary_op
+                | additive_expr
+?additive_expr: additive_expr PLUS multiplicative_expr  -> binary_op
+              | additive_expr MINUS multiplicative_expr  -> binary_op
+              | multiplicative_expr
+?multiplicative_expr: multiplicative_expr STAR unary_expr  -> binary_op
+                    | multiplicative_expr SLASH unary_expr  -> binary_op
+                    | multiplicative_expr PERCENT unary_expr  -> binary_op
+                    | unary_expr
+?unary_expr: MINUS unary_expr  -> unary_pre_op
+           | BANG unary_expr  -> unary_pre_op
+           | postfix_expr
+
+?postfix_expr: postfix_expr LBRACKET expression RBRACKET  -> indexing
+             | postfix_expr DOT IDENT LPAREN [args] RPAREN  -> method_call
+             | postfix_expr MAYBE  -> maybe_unwrap
+             | primary
+
+// primary — НЕ `?`, чтобы Transformer-методы (int_literal, name, ...)
+// сработали на одиночных токенах и вернули узлы Literal/Name/etc.
+primary: INT  -> int_literal
+       | FLOAT  -> float_literal
+       | STRING  -> string_literal
+       | CHAR  -> char_literal
+       | TRUE  -> true_literal
+       | FALSE  -> false_literal
+       | IDENT LPAREN [args] RPAREN  -> function_call
+       | IDENT  -> name
+       | LPAREN expression RPAREN  -> paren_expr
+       | LPAREN expression (COMMA expression)+ RPAREN  -> tuple_expr
+       | LBRACKET [expression (COMMA expression)*] RBRACKET  -> array_literal
+
+args: expression (COMMA expression)*
+
+// ---------- Statements ----------
+
+statement: expression_stmt
+         | assign_stmt
+         | if_stmt
+         | while_stmt
+         | for_stmt
+         | break_stmt
+         | continue_stmt
+         | return_stmt
+         | block
+
+expression_stmt: expression SEMICOLON
+assign_stmt: lvalue assign_op expression SEMICOLON
+?assign_op: EQ | PLUS_EQ | MINUS_EQ | STAR_EQ | SLASH_EQ | PERCENT_EQ
+
+if_stmt: IF expression statement [ELSE statement]
+while_stmt: WHILE expression statement
+for_stmt: FOR iterable COLON expression statement
+break_stmt: BREAK SEMICOLON
+continue_stmt: CONTINUE SEMICOLON
+return_stmt: RETURN [expression] SEMICOLON
+block: LBRACE statement* RBRACE
+
+// lvalue — три формы (имя / деструктурирующий tuple / индекс). `->`
+// алиасы позволяют Transformer'у вызвать правильный метод по data-имени.
+// lvalue не `?`, чтобы Transformer-методы lvalue_ident/tuple/index сработали.
+lvalue: IDENT  -> lvalue_ident
+     | LPAREN lvalue (COMMA lvalue)+ RPAREN  -> lvalue_tuple
+     | lvalue LBRACKET expression RBRACKET  -> lvalue_index
+
+iterable: IDENT  -> iterable_ident
+        | LPAREN lvalue (COMMA lvalue)+ RPAREN  -> iterable_tuple
+
+// ---------- Declarations ----------
+
+function: FUNC IDENT LPAREN [params] RPAREN [COLON type] block
+params: typed_field (COMMA typed_field)*
+typed_field: IDENT COLON type
+
+module: function*
+?start: module

@@ -1,0 +1,32 @@
+// более сложный пример с функцией hash
+
+template<type T: ByteView>
+func murmurhash(x: T): UInt64 {
+    bytes: Slice<Byte> = x.bytes();
+}
+
+func murmurhash2(data: Slice<Byte>): UInt64 {
+    const m = 0x5bd1e995;
+    const seed = 0;
+    const r = 24;
+
+    h = seed ^ len;
+
+    k = 0;
+    while data.len() >= 4 {
+        k  = data[0];
+        k |= data[1] << 8;
+        k |= data[2] << 16;
+        k |= data[3] << 24;
+
+        k *= m;
+        k ^= k >> r;
+        k *= m;
+
+        h *= m;
+        h ^= k;
+
+        data += 4;
+        len -= 4;
+    }
+}
