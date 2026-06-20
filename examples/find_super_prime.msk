@@ -1,5 +1,5 @@
 
-func isPrime(n : Int): Bool {
+func is_prime(n : Int): Bool {
     if n < 2 { return false; }
     acc = 2;
     while acc * acc <= n {
@@ -8,16 +8,16 @@ func isPrime(n : Int): Bool {
     return true;
 }
 
-func getSuperPrimes(count: Int): DynArray<Int> {
+func get_super_primes(count: Int): DynArray<Int> {
     primes = DynArray();
 
     acc = 1;
     prime_acc = 0;
 
     while primes.len() < count {
-        if isPrime(acc) {
+        if is_prime(acc) {
             prime_acc += 1;
-            if isPrime(prime_acc) {
+            if is_prime(prime_acc) {
                 primes.push(acc);
             }
         }

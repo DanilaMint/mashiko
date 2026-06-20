@@ -88,9 +88,10 @@ class Token:
     value: str
     line: int
     col: int
+    index: int
 
     def __repr__(self) -> str:
-        return f"Token({self.type.name}, {self.value!r}, {self.line}:{self.col})"
+        return f"Token({self.type.name}, {self.value!r}, {self.line}:{self.col}@{self.index})"
 
 
 class LexerError(Exception):
@@ -152,7 +153,11 @@ class Lexer:
                 if self.pos == hex_start:
                     raise LexerError(f"empty hex literal at {start_line}:{start_col}")
                 return Token(
-                    TokenType.INT, self.src[start : self.pos], start_line, start_col
+                    TokenType.INT,
+                    self.src[start : self.pos],
+                    start_line,
+                    start_col,
+                    start,
                 )
             if nxt == "b" or nxt == "B":
                 self._advance()
@@ -163,7 +168,11 @@ class Lexer:
                 if self.pos == bin_start:
                     raise LexerError(f"empty binary literal at {start_line}:{start_col}")
                 return Token(
-                    TokenType.INT, self.src[start : self.pos], start_line, start_col
+                    TokenType.INT,
+                    self.src[start : self.pos],
+                    start_line,
+                    start_col,
+                    start,
                 )
         is_float = False
         while self.pos < len(self.src) and self.src[self.pos].isdigit():
@@ -191,6 +200,7 @@ class Lexer:
             value,
             start_line,
             start_col,
+            start,
         )
 
     def _identifier(self) -> Token:
@@ -201,17 +211,22 @@ class Lexer:
         ):
             self._advance()
         text = self.src[start : self.pos]
-        return Token(KEYWORDS.get(text, TokenType.IDENT), text, start_line, start_col)
+        return Token(
+            KEYWORDS.get(text, TokenType.IDENT), text, start_line, start_col, start
+        )
 
     def _string(self) -> Token:
         start_line, start_col = self.line, self.col
+        start = self.pos
         self._advance()
         chars: list[str] = []
         while self.pos < len(self.src):
             ch = self._peek()
             if ch == '"':
                 self._advance()
-                return Token(TokenType.STRING, "".join(chars), start_line, start_col)
+                return Token(
+                    TokenType.STRING, "".join(chars), start_line, start_col, start
+                )
             if ch == "\n":
                 raise LexerError(
                     f"unterminated string literal at {start_line}:{start_col}"
@@ -246,6 +261,7 @@ class Lexer:
 
     def _char(self) -> Token:
         start_line, start_col = self.line, self.col
+        start = self.pos
         self._advance()
         if self.pos >= len(self.src) or self._peek() == "\n":
             raise LexerError(
@@ -284,11 +300,12 @@ class Lexer:
                 f"unterminated char literal at {start_line}:{start_col}"
             )
         self._advance()
-        return Token(TokenType.CHAR, value, start_line, start_col)
+        return Token(TokenType.CHAR, value, start_line, start_col, start)
 
     def _emit(self, tt: TokenType, length: int = 1) -> Token:
+        start = self.pos
         value = self.src[self.pos : self.pos + length]
-        tok = Token(tt, value, self.line, self.col)
+        tok = Token(tt, value, self.line, self.col, start)
         for _ in range(length):
             self._advance()
         return tok
@@ -401,5 +418,5 @@ class Lexer:
                                 f"unexpected character {ch!r} at {self.line}:{self.col}"
                             )
 
-        tokens.append(Token(TokenType.EOF, "", self.line, self.col))
+        tokens.append(Token(TokenType.EOF, "", self.line, self.col, self.pos))
         return tokens
