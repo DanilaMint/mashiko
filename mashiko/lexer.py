@@ -6,6 +6,10 @@ from enum import Enum, auto
 
 class TokenType(Enum):
     # ключевые слова
+    CLASS = auto()
+    CONSTRUCTOR = auto()
+    DESTRUCTOR = auto()
+    INTERFACE = auto()
     FUNC = auto()
     IF = auto()
     ELSE = auto()
@@ -69,6 +73,10 @@ class TokenType(Enum):
 
 
 KEYWORDS: dict[str, TokenType] = {
+    "class": TokenType.CLASS,
+    "constructor": TokenType.CONSTRUCTOR,
+    "destructor": TokenType.DESTRUCTOR,
+    "interface": TokenType.INTERFACE,
     "func": TokenType.FUNC,
     "if": TokenType.IF,
     "else": TokenType.ELSE,

@@ -526,9 +526,9 @@ class _MashikoTransformer(Transformer):
         block = items[-1]
         params = next(
             (
-                list(t)
+                [x for x in t if isinstance(x, ast.Spanned)]
                 for t in items
-                if isinstance(t, list) and all(isinstance(p, ast.Spanned) for p in t)
+                if isinstance(t, list)
             ),
             [],
         )
@@ -550,7 +550,199 @@ class _MashikoTransformer(Transformer):
             _span(items, self.src),
         )
 
+    # ----- Class -----
+
+    def class_field(self, items: list[Any]) -> ast.Spanned[ast.Param]:
+        # typed_field SEMICOLON — отбрасываем SEMICOLON, оставляем Param
+        return items[0]
+
+    def class_method(self, items: list[Any]) -> ast.Spanned[ast.FunctionDef]:
+        # IDENT LPAREN [params] RPAREN [COLON type] block
+        name = items[0].value
+        block = items[-1]
+        params = next(
+            (
+                [x for x in t if isinstance(x, ast.Spanned)]
+                for t in items
+                if isinstance(t, list)
+            ),
+            [],
+        )
+        return_type = next(
+            (
+                t
+                for t in items
+                if isinstance(t, ast.Spanned) and isinstance(t.node, ast.Type)
+            ),
+            None,
+        )
+        return ast.Spanned(
+            ast.FunctionDef(
+                name=name,
+                params=tuple(params),
+                return_type=return_type,
+                body=block,
+            ),
+            _span(items, self.src),
+        )
+
+    def constructor(self, items: list[Any]) -> ast.Spanned[ast.ConstructorDef]:
+        # CONSTRUCTOR LPAREN [params] RPAREN block
+        block = items[-1]
+        params = next(
+            (
+                [x for x in t if isinstance(x, ast.Spanned)]
+                for t in items
+                if isinstance(t, list)
+            ),
+            [],
+        )
+        return ast.Spanned(
+            ast.ConstructorDef(params=tuple(params), body=block),
+            _span(items, self.src),
+        )
+
+    def class_body(
+        self, items: list[Any]
+    ) -> tuple[
+        tuple[ast.Spanned[ast.Param], ...],
+        tuple[ast.Spanned[ast.FunctionDef], ...],
+        tuple[ast.Spanned[ast.ConstructorDef], ...],
+    ]:
+        # Разносим детей по трём корзинам; возвращаем кортеж кортежей,
+        # который class затем оборачивает именем и span'ом.
+        fields: list[ast.Spanned[ast.Param]] = []
+        methods: list[ast.Spanned[ast.FunctionDef]] = []
+        constructors: list[ast.Spanned[ast.ConstructorDef]] = []
+        for it in items:
+            if not isinstance(it, ast.Spanned):
+                continue
+            inner = it.node
+            if isinstance(inner, ast.Param):
+                fields.append(it)
+            elif isinstance(inner, ast.FunctionDef):
+                methods.append(it)
+            elif isinstance(inner, ast.ConstructorDef):
+                constructors.append(it)
+        return (tuple(fields), tuple(methods), tuple(constructors))
+
+    def class_def(self, items: list[Any]) -> ast.Spanned[ast.ClassDef]:
+        # CLASS IDENT [COLON IDENT (COMMA IDENT)*] LBRACE class_body RBRACE
+        name = items[1].value
+        parents: list[str] = []
+        body_idx = -1
+        for i, item in enumerate(items):
+            if isinstance(item, LarkToken):
+                if item.type == "COLON":
+                    j = i + 1
+                    while j < len(items) and isinstance(items[j], LarkToken):
+                        if items[j].type == "IDENT":
+                            parents.append(items[j].value)
+                            j += 1
+                        elif items[j].type == "COMMA":
+                            j += 1
+                        else:
+                            break
+            elif isinstance(item, tuple) and len(item) == 3:
+                # class_body вернул (fields, methods, constructors).
+                body_idx = i
+        if body_idx == -1:
+            fields: tuple = ()
+            methods: tuple = ()
+            constructors: tuple = ()
+        else:
+            fields, methods, constructors = items[body_idx]
+        return ast.Spanned(
+            ast.ClassDef(
+                name=name,
+                parents=tuple(parents),
+                fields=fields,
+                methods=methods,
+                constructors=constructors,
+            ),
+            _span(items, self.src),
+        )
+
+    # ----- Interfaces -----
+
+    def interface_method(self, items: list[Any]) -> ast.Spanned[ast.InterfaceMethodDef]:
+        # IDENT LPAREN type* RPAREN [COLON type] SEMICOLON
+        # Типы в params и return_type неразличимы по позиции в items, поэтому
+        # идём по токенам-разделителям (LPAREN/RPAREN/COLON) и решаем по фазе.
+        name = items[0].value
+        param_types: list[ast.Spanned[ast.Type]] = []
+        return_type: ast.Spanned[ast.Type] | None = None
+        phase = "pre"
+        for item in items[1:]:
+            if isinstance(item, LarkToken):
+                if item.type == "LPAREN":
+                    phase = "in_params"
+                elif item.type == "RPAREN":
+                    phase = "after_rparen"
+                elif item.type == "COLON" and phase == "after_rparen":
+                    phase = "expect_return"
+            elif isinstance(item, ast.Spanned) and isinstance(item.node, ast.Type):
+                if phase == "in_params":
+                    param_types.append(item)
+                elif phase == "expect_return":
+                    return_type = item
+                    phase = "done"
+        return ast.Spanned(
+            ast.InterfaceMethodDef(
+                name=name,
+                param_types=tuple(param_types),
+                return_type=return_type,
+            ),
+            _span(items, self.src),
+        )
+
+    def interface_body(
+        self, items: list[Any]
+    ) -> tuple[ast.Spanned[ast.InterfaceMethodDef], ...]:
+        return tuple(i for i in items if isinstance(i, ast.Spanned))
+
+    def interface_def(self, items: list[Any]) -> ast.Spanned[ast.InterfaceDef]:
+        # INTERFACE IDENT [COLON IDENT (COMMA IDENT)*] LBRACE interface_body RBRACE
+        name = items[1].value
+        parents: list[str] = []
+        methods: tuple = ()
+        for i, item in enumerate(items):
+            if isinstance(item, LarkToken):
+                if item.type == "COLON":
+                    j = i + 1
+                    while j < len(items) and isinstance(items[j], LarkToken):
+                        if items[j].type == "IDENT":
+                            parents.append(items[j].value)
+                            j += 1
+                        elif items[j].type == "COMMA":
+                            j += 1
+                        else:
+                            break
+            elif isinstance(item, tuple):
+                methods = item
+        return ast.Spanned(
+            ast.InterfaceDef(
+                name=name,
+                parents=tuple(parents),
+                methods=methods,
+            ),
+            _span(items, self.src),
+        )
+
     def module(self, items: list[Any]) -> ast.Spanned[ast.Module]:
+        functions: list[ast.Spanned[ast.FunctionDef]] = []
+        classes: list[ast.Spanned[ast.ClassDef]] = []
+        interfaces: list[ast.Spanned[ast.InterfaceDef]] = []
+        for it in items:
+            if not isinstance(it, ast.Spanned):
+                continue
+            inner = it.node
+            if isinstance(inner, ast.FunctionDef):
+                functions.append(it)
+            elif isinstance(inner, ast.ClassDef):
+                classes.append(it)
+            elif isinstance(inner, ast.InterfaceDef):
+                interfaces.append(it)
         if items:
             first = items[0]
             last = items[-1]
@@ -567,7 +759,11 @@ class _MashikoTransformer(Transformer):
         else:
             span = ast.Span(0, 0, 0, 0, 0, 0)
         return ast.Spanned(
-            ast.Module(functions=tuple(items)),
+            ast.Module(
+                functions=tuple(functions),
+                classes=tuple(classes),
+                interfaces=tuple(interfaces),
+            ),
             span,
         )
 

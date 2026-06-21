@@ -16,6 +16,10 @@
 // =============================================================
 
 // --- Ключевые слова ---
+CLASS: "class"
+CONSTRUCTOR: "constructor"
+DESTRUCTOR: "destructor"
+INTERFACE: "interface"
 FUNC: "func"
 IF: "if"
 ELSE: "else"
@@ -187,11 +191,27 @@ lvalue: IDENT  -> lvalue_ident
 iterable: IDENT  -> iterable_ident
         | LPAREN lvalue (COMMA lvalue)+ RPAREN  -> iterable_tuple
 
-// ---------- Declarations ----------
-
+// ---------- Functions ----------
 function: FUNC IDENT LPAREN [params] RPAREN [COLON type] block
 params: typed_field (COMMA typed_field)*
 typed_field: IDENT COLON type
 
-module: function*
+// ---------- Classes ----------
+class_def: CLASS IDENT [COLON IDENT (COMMA IDENT)*] LBRACE class_body RBRACE
+
+class_body: (class_field | class_method | constructor)*
+class_field: typed_field SEMICOLON
+class_method: IDENT LPAREN [params] RPAREN [COLON type] block
+constructor: CONSTRUCTOR LPAREN [params] RPAREN block
+destructor: DESTRUCTOR LPAREN RPAREN block
+
+// --------- Interfaces ---------
+interface_def: INTERFACE IDENT [COLON IDENT (COMMA IDENT)*] LBRACE interface_body RBRACE
+
+interface_body: interface_method*
+interface_method: IDENT LPAREN type* RPAREN [COLON type] SEMICOLON
+
+
+module: (function | class_def | interface_def)*
+
 ?start: module

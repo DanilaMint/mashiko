@@ -40,6 +40,8 @@ _NODE_COLORS: dict[str, str] = {
     "Module": _BOLD + _BR_GREEN,
     "FunctionDef": _BOLD + _BR_GREEN,
     "Param": _BR_GREEN,
+    "ClassDef": _BOLD + _BR_GREEN,
+    "ConstructorDef": _BR_GREEN,
     # Типы
     "SimpleType": _GREEN,
     "TupleType": _GREEN,

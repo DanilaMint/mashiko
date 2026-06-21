@@ -1,0 +1,5 @@
+interface ByteView {
+    bytes(): Array<Byte>;
+}
+
+class Int: ByteView {}

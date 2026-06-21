@@ -380,3 +380,53 @@ class FunctionDef:
 @dataclass(frozen=True, slots=True)
 class Module:
     functions: tuple[Spanned[FunctionDef], ...]
+    classes: tuple[Spanned[ClassDef], ...]
+    interfaces: tuple[Spanned[InterfaceDef], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConstructorDef:
+    """Конструктор класса: `constructor(params) { body }`."""
+    params: tuple[Spanned[Param], ...]
+    body: Spanned[Block]
+
+
+@dataclass(frozen=True, slots=True)
+class InterfaceMethodDef:
+    """Объявление метода интерфейса: `name(types): RetType;`.
+
+    В отличие от методов класса, параметры интерфейса безымянные — только
+    типы (по грамматике `INTERFACE LPAREN TYPE* RPAREN`). Имена параметров
+    остаются на совести реализующего класса.
+    """
+    name: str
+    param_types: tuple[Spanned[Type], ...]
+    return_type: Spanned[Type] | None
+
+
+@dataclass(frozen=True, slots=True)
+class InterfaceDef:
+    """Объявление интерфейса: `interface Name [: Parent1, Parent2, ...] { methods }`.
+
+    `parents` — список имён родительских интерфейсов (наследование интерфейсов),
+    `methods` — только сигнатуры (тела нет, класс-реализатор их определяет).
+    """
+    name: str
+    parents: tuple[str, ...]
+    methods: tuple[Spanned[InterfaceMethodDef], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClassDef:
+    """Объявление класса: `class Name [: Iface1, Iface2, ...] { fields; methods; constructors }`.
+
+    `fields` — поля класса (`name: Type;`), `methods` — обычные методы как
+    `FunctionDef` без `func`-префикса, `constructors` — список конструкторов
+    (грамматика допускает ноль и более), `parents` — имена реализуемых
+    интерфейсов.
+    """
+    name: str
+    parents: tuple[str, ...]
+    fields: tuple[Spanned[Param], ...]
+    methods: tuple[Spanned[FunctionDef], ...]
+    constructors: tuple[Spanned[ConstructorDef], ...]
