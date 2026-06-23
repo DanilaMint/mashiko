@@ -1,1 +1,0 @@
-mashiko: codegen pending

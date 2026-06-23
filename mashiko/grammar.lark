@@ -1,0 +1,181 @@
+// Tokens
+
+// Keywords
+
+FUNC: "func"
+CLASS: "class"
+CONSTRUCTOR: "constructor"
+DESTRUCTOR: "destructor"
+CLONER: "clone"
+INTERFACE: "interface"
+TEMPLATE: "template"
+CONST: "const"
+TYPE: "type"
+
+IF: "if"
+ELSE: "else"
+WHILE: "while"
+FOR: "for"
+BREAK: "break"
+CONTINUE: "continue"
+RETURN: "return"
+
+// idents and literals
+IDENT: /[a-zA-Z_][a-zA-Z0-9_]*/
+INT: /\d+/
+FLOAT: /\d+(\.\d*)?([eE]-?\d+)?/
+STRING: /"(\\.|[^"\\])*"/
+CHAR: /'(\\.|[^'\\])'/
+BOOL: "true" | "false"
+
+// punctuation
+LPAREN: "("
+RPAREN: ")"
+LBRACE: "{"
+RBRACE: "}"
+LBRACKET: "["
+RBRACKET: "]"
+COLON: ":"
+SEMICOLON: ";"
+COMMA: ","
+DOT: "."
+
+// operators
+PLUS: /\+/
+MINUS: /-/
+STAR: /\*/
+SLASH: /\//
+PERCENT: /%/
+EQ: /=/
+PLUS_EQ: /\+=/
+MINUS_EQ: /-=/
+STAR_EQ: /\*=/
+SLASH_EQ: /\/=/
+PERCENT_EQ: /%=/
+EQEQ: /==/
+BANG_EQ: /!=/
+LE: /<=/
+GE: />=/
+LANGLE: /</
+RANGLE: />/
+BANG: /!/
+AMP_AMP: /&&/
+PIPE_PIPE: /\|\|/
+AMP: /&/
+PIPE: /\|/
+CARET: /\^/
+TILDE: /~/
+MAYBE: /\?/
+
+// types
+
+?type: simple_type | tuple_type | generic_type | maybe_type | refinement_type
+simple_type: IDENT
+tuple_type: LPAREN [type (COMMA type)*] RPAREN
+generic_type: IDENT LANGLE type (COMMA (type | expression))* RANGLE
+maybe_type: type MAYBE
+
+// interfaces
+
+interface: IDENT | (IDENT LANGLE type (COMMA (type | expression))* RANGLE)
+
+// expressions
+
+?expression: conditional
+?conditional: or_expr
+            | or_expr IF or_expr ELSE conditional  -> conditional
+
+?or_expr: or_expr PIPE_PIPE and_expr  -> binary_op
+        | and_expr
+?and_expr: and_expr AMP_AMP bit_or_expr  -> binary_op
+         | bit_or_expr
+?bit_or_expr: bit_or_expr PIPE bit_xor_expr  -> binary_op
+            | bit_xor_expr
+?bit_xor_expr: bit_xor_expr CARET bit_and_expr  -> binary_op
+              | bit_and_expr
+?bit_and_expr: bit_and_expr AMP equality_expr  -> binary_op
+             | equality_expr
+?equality_expr: equality_expr EQEQ comparison_expr  -> binary_op
+              | equality_expr BANG_EQ comparison_expr  -> binary_op
+              | comparison_expr
+?comparison_expr: comparison_expr LANGLE additive_expr  -> binary_op
+                | comparison_expr RANGLE additive_expr  -> binary_op
+                | comparison_expr LE additive_expr  -> binary_op
+                | comparison_expr GE additive_expr  -> binary_op
+                | additive_expr
+?additive_expr: additive_expr PLUS multiplicative_expr  -> binary_op
+              | additive_expr MINUS multiplicative_expr  -> binary_op
+              | multiplicative_expr
+?multiplicative_expr: multiplicative_expr STAR unary_expr  -> binary_op
+                    | multiplicative_expr SLASH unary_expr  -> binary_op
+                    | multiplicative_expr PERCENT unary_expr  -> binary_op
+                    | unary_expr
+?unary_expr: MINUS unary_expr  -> unary_pre_op
+           | BANG unary_expr  -> unary_pre_op
+           | postfix_expr
+
+?postfix_expr: postfix_expr LBRACKET expression RBRACKET  -> indexing
+             | postfix_expr DOT IDENT LPAREN [args] RPAREN  -> method_call
+             | postfix_expr MAYBE  -> maybe_unwrap
+             | primary
+
+primary: INT  -> int_literal
+       | FLOAT  -> float_literal
+       | STRING  -> string_literal
+       | CHAR  -> char_literal
+       | TRUE  -> true_literal
+       | FALSE  -> false_literal
+       | IDENT LPAREN [args] RPAREN  -> function_call
+       | IDENT  -> name
+       | LPAREN expression RPAREN  -> paren_expr
+       | LPAREN expression (COMMA expression)+ RPAREN  -> tuple_expr
+       | LBRACKET [expression (COMMA expression)*] RBRACKET  -> array_literal
+
+args: expression (COMMA expression)*
+
+// statements
+
+statement: assign_statement | if_statement | while_statement | for_statement | break_statement | continue_statement | return_statement | block
+
+assign_statement: left_side_assign assign_operator expression SEMICOLON
+if_statement: IF expression statement [ELSE statement]
+while_statement: WHILE expression statement
+for_statement: FOR iteration_variable COLON expression statement
+break_statement: BREAK SEMICOLON
+continue_statement: CONTINUE SEMICOLON
+return_statement: RETURN [expression] SEMICOLON
+
+block: LBRACE statement* RBRACE
+
+left_side_assign: IDENT | (IDENT LBRACKET expression RBRACKET) | (LPAREN IDENT (COMMA IDENT)* RPAREN)
+assign_operator: EQ | PLUS_EQ | MINUS_EQ | STAR_EQ | SLASH_EQ | PERCENT_EQ
+iteration_variable: IDENT | (LPAREN IDENT (COMMA IDENT)* RPAREN)
+
+// declarations
+
+typed_ident: IDENT COLON type
+?arguments: LPAREN [typed_ident (COMMA typed_ident)*] RPAREN
+?return_type: COLON type
+?depent_interfaces: COLON interface (COMMA interface)*
+
+function_decl: FUNC IDENT arguments [return_type] block
+
+class_decl: CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
+
+class_body: (field | constructor | destructor | cloner | method)*
+
+field: typed_ident SEMICOLON
+constructor: CONSTRUCTOR arguments block
+destructor: DESTRUCTOR LPAREN RPAREN block
+cloner: CLONER LPAREN RPAREN block
+method: IDENT arguments [return_type] block
+
+interface_decl: INTERFACE IDENT [depent_interfaces] LBRACE interface_body RBRACE
+
+?interface_body: interface_method*
+
+interface_method: IDENT arguments [return_type] (block | SEMICOLON)
+
+module: (function_decl | class_decl | interface_decl)*
+
+?start: module

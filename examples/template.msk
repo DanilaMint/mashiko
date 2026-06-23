@@ -1,0 +1,22 @@
+// Демонстрация template-параметров: тип, значение, система-singleton.
+// `template<...>` ставится перед function/class/interface.
+
+template<type T>
+func identity(x: T): T {
+    return x;
+}
+
+template<type T, value N>
+class FixedArray {
+    data: T;
+    size: Int;
+}
+
+template<system S>
+interface Service {
+    init(): Bool;
+}
+
+func answer(): Int {
+    return 42;
+}
