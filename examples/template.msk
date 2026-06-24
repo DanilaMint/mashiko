@@ -6,15 +6,10 @@ func identity(x: T): T {
     return x;
 }
 
-template<type T, value N>
+template<type T, const N: UInt>
 class FixedArray {
     data: T;
     size: Int;
-}
-
-template<system S>
-interface Service {
-    init(): Bool;
 }
 
 func answer(): Int {

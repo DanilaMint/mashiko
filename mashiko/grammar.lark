@@ -22,11 +22,17 @@ RETURN: "return"
 
 // idents and literals
 IDENT: /[a-zA-Z_][a-zA-Z0-9_]*/
+// type-position identifiers: capitalised only, to disambiguate names from types
+TYPE_IDENT: /[A-Z][a-zA-Z0-9_]*/
 INT: /\d+/
 FLOAT: /\d+(\.\d*)?([eE]-?\d+)?/
 STRING: /"(\\.|[^"\\])*"/
 CHAR: /'(\\.|[^'\\])'/
 BOOL: "true" | "false"
+
+// comments (non-nested; block comments don't span nested /* */)
+LINE_COMMENT: /\/\/[^\n]*/
+BLOCK_COMMENT: /\/\*[\s\S]*?\*\//
 
 // punctuation
 LPAREN: "("
@@ -69,15 +75,15 @@ MAYBE: /\?/
 
 // types
 
-?type: simple_type | tuple_type | generic_type | maybe_type | refinement_type
-simple_type: IDENT
+?type: simple_type | tuple_type | generic_type | maybe_type
+simple_type: TYPE_IDENT
 tuple_type: LPAREN [type (COMMA type)*] RPAREN
-generic_type: IDENT LANGLE type (COMMA (type | expression))* RANGLE
+generic_type: TYPE_IDENT LANGLE type (COMMA (type | expression))* RANGLE
 maybe_type: type MAYBE
 
 // interfaces
 
-interface: IDENT | (IDENT LANGLE type (COMMA (type | expression))* RANGLE)
+interface: TYPE_IDENT | (TYPE_IDENT LANGLE type (COMMA (type | expression))* RANGLE)
 
 // expressions
 
@@ -110,32 +116,33 @@ interface: IDENT | (IDENT LANGLE type (COMMA (type | expression))* RANGLE)
                     | multiplicative_expr SLASH unary_expr  -> binary_op
                     | multiplicative_expr PERCENT unary_expr  -> binary_op
                     | unary_expr
-?unary_expr: MINUS unary_expr  -> unary_pre_op
+unary_expr: MINUS unary_expr  -> unary_pre_op
            | BANG unary_expr  -> unary_pre_op
-           | postfix_expr
+           | postfix
 
-?postfix_expr: postfix_expr LBRACKET expression RBRACKET  -> indexing
-             | postfix_expr DOT IDENT LPAREN [args] RPAREN  -> method_call
-             | postfix_expr MAYBE  -> maybe_unwrap
-             | primary
+postfix: primary
+       | postfix LBRACKET expression RBRACKET  -> indexing
+       | postfix DOT IDENT LPAREN [args] RPAREN  -> method_call
+       | postfix DOT IDENT  -> member_access
+       | postfix MAYBE  -> maybe_unwrap
 
 primary: INT  -> int_literal
        | FLOAT  -> float_literal
        | STRING  -> string_literal
        | CHAR  -> char_literal
-       | TRUE  -> true_literal
-       | FALSE  -> false_literal
+       | BOOL -> bool_literal
        | IDENT LPAREN [args] RPAREN  -> function_call
        | IDENT  -> name
        | LPAREN expression RPAREN  -> paren_expr
-       | LPAREN expression (COMMA expression)+ RPAREN  -> tuple_expr
        | LBRACKET [expression (COMMA expression)*] RBRACKET  -> array_literal
 
 args: expression (COMMA expression)*
 
 // statements
 
-statement: assign_statement | if_statement | while_statement | for_statement | break_statement | continue_statement | return_statement | block
+statement: assign_statement | expression_statement | if_statement | while_statement | for_statement | break_statement | continue_statement | return_statement | block
+
+expression_statement: expression SEMICOLON
 
 assign_statement: left_side_assign assign_operator expression SEMICOLON
 if_statement: IF expression statement [ELSE statement]
@@ -147,7 +154,9 @@ return_statement: RETURN [expression] SEMICOLON
 
 block: LBRACE statement* RBRACE
 
-left_side_assign: IDENT | (IDENT LBRACKET expression RBRACKET) | (LPAREN IDENT (COMMA IDENT)* RPAREN)
+left_side_assign: IDENT | (IDENT LBRACKET expression RBRACKET) | (LPAREN IDENT (COMMA IDENT)* RPAREN) | member_lvalue
+
+member_lvalue: IDENT DOT IDENT
 assign_operator: EQ | PLUS_EQ | MINUS_EQ | STAR_EQ | SLASH_EQ | PERCENT_EQ
 iteration_variable: IDENT | (LPAREN IDENT (COMMA IDENT)* RPAREN)
 
@@ -156,11 +165,16 @@ iteration_variable: IDENT | (LPAREN IDENT (COMMA IDENT)* RPAREN)
 typed_ident: IDENT COLON type
 ?arguments: LPAREN [typed_ident (COMMA typed_ident)*] RPAREN
 ?return_type: COLON type
-?depent_interfaces: COLON interface (COMMA interface)*
+depent_interfaces: COLON interface (COMMA interface)*
 
-function_decl: FUNC IDENT arguments [return_type] block
+template_param: TYPE IDENT [depent_interfaces]
+template_const: CONST IDENT COLON type [EQ expression]
+?template_member: template_param | template_const
+template_decl: TEMPLATE LANGLE [template_member (COMMA template_member)*] RANGLE
 
-class_decl: CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
+function_decl: [template_decl] FUNC IDENT arguments [return_type] block
+
+class_decl: [template_decl] CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
 
 class_body: (field | constructor | destructor | cloner | method)*
 
@@ -170,7 +184,7 @@ destructor: DESTRUCTOR LPAREN RPAREN block
 cloner: CLONER LPAREN RPAREN block
 method: IDENT arguments [return_type] block
 
-interface_decl: INTERFACE IDENT [depent_interfaces] LBRACE interface_body RBRACE
+interface_decl: [template_decl] INTERFACE IDENT [depent_interfaces] LBRACE interface_body RBRACE
 
 ?interface_body: interface_method*
 
