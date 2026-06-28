@@ -2,6 +2,7 @@
 
 from .errors import ParseError
 from .parser import parse_ast, parse_ast_file, parse_file, parse_string
+from .syntax import Node, Span
 
 __version__ = "0.1.0"
 
@@ -12,4 +13,6 @@ __all__ = [
     "parse_ast",
     "parse_ast_file",
     "ParseError",
+    "Node",
+    "Span",
 ]

@@ -1,5 +1,15 @@
 
+class TokenKind {
+    enum: UInt;
+
+    constructor(n: UInt) { this.enum = n; }
+}
+
+const FUNC_KW = TokenKind(1);
+const CLASS_KW = TokenKind(2);
+
 enum TokenKind {
+    EOF
     FUNC_KW,
     CLASS_KW,
     CONSTRUCTOR_KW,

@@ -88,8 +88,13 @@ class FindSuperPrimeASTTests(unittest.TestCase):
     def test_is_prime_signature(self):
         f = self.module.declarations[0]
         self.assertIsInstance(f, FunctionDecl)
-        self.assertEqual(f.params, (Param(name="n", type=SimpleType(name="Int")),))
-        self.assertEqual(f.return_type, SimpleType(name="Bool"))
+        self.assertEqual(len(f.params), 1)
+        self.assertIsInstance(f.params[0], Param)
+        self.assertEqual(f.params[0].name, "n")
+        self.assertIsInstance(f.params[0].type, SimpleType)
+        self.assertEqual(f.params[0].type.name, "Int")
+        self.assertIsInstance(f.return_type, SimpleType)
+        self.assertEqual(f.return_type.name, "Bool")
         self.assertIsInstance(f.body, Block)
 
     def test_is_prime_body_statements(self):
@@ -142,7 +147,8 @@ class FindSuperPrimeASTTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(method_calls), 1)
         push = method_calls[0]
-        self.assertEqual(push.obj, Name(name="primes"))
+        self.assertIsInstance(push.obj, Name)
+        self.assertEqual(push.obj.name, "primes")
         self.assertEqual(len(push.args), 1)
 
 

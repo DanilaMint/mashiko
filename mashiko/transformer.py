@@ -5,12 +5,20 @@ public method corresponds to a rule (or rule alias) that actually appears
 in the parse tree; many pass-through rules are collapsed by the
 ``__default__`` fallback, which simply returns the single child of a
 wrapper rule.
+
+The parser is constructed with ``propagate_positions=True``, so every
+rule's ``meta`` carries the source range (character offsets plus 1-based
+line/column). ``@v_args(meta=True)`` reshapes the callback signature to
+``(meta, children)`` so we can convert that range — or, for a sub-range,
+the position of a child ``Token`` — into a
+:class:`~mashiko.syntax.Span` and pass it as the first constructor
+argument.
 """
 
 from __future__ import annotations
 
 from lark import Token, Tree
-from lark.visitors import Transformer
+from lark.visitors import Transformer, v_args
 
 from .syntax import (
     ArrayLiteral,
@@ -54,6 +62,7 @@ from .syntax import (
     ParenExpr,
     ReturnStatement,
     SimpleType,
+    Span,
     Statement,
     StringLiteral,
     TemplateDecl,
@@ -74,22 +83,55 @@ def _strip_quotes(s: str) -> str:
     return s[1:-1]
 
 
+def _span_from_meta(meta) -> Span:
+    if meta.empty:
+        # The rule matched zero tokens (e.g. an empty class_body in
+        # `class C { }`). Lark doesn't know a source range for it; we
+        # fall back to a zero-width span at the start of the file so
+        # downstream code can still rely on the field existing.
+        return Span(0, 0, 1, 1, 1, 1)
+    return Span(
+        start_pos=meta.start_pos,
+        end_pos=meta.end_pos,
+        start_line=meta.line,
+        start_column=meta.column,
+        end_line=meta.end_line,
+        end_column=meta.end_column,
+    )
+
+
+def _span_from_token(token: Token) -> Span:
+    return Span(
+        start_pos=token.start_pos,
+        end_pos=token.end_pos,
+        start_line=token.line,
+        start_column=token.column,
+        end_line=token.end_line,
+        end_column=token.end_column,
+    )
+
+
+@v_args(meta=True)
 class TreeToAST(Transformer):
     """Walk a Lark ``Tree`` and emit ``syntax`` dataclass instances."""
 
     # ---- Earley ambiguity wrapper -----------------------------------------
     # When ``ambiguity='explicit'``, Lark wraps ambiguous parses in a
     # ``_ambig`` node. Take the first alternative.
+    # This method is not wrapped by ``@v_args(meta=True)`` (the decorator
+    # skips names starting with ``_``), so it keeps the plain
+    # ``(self, children)`` signature.
     def _ambig(self, children):
         return children[0]
 
     # ---- Module & declarations --------------------------------------------
-    def module(self, children):
-        return Module(declarations=tuple(children))
+    def module(self, meta, children):
+        return Module(span=_span_from_meta(meta), declarations=tuple(children))
 
-    def function_decl(self, children):
+    def function_decl(self, meta, children):
         # children: [template_or_None, FUNC, IDENT, arguments_tree, return_type_or_None, block]
         return FunctionDecl(
+            span=_span_from_meta(meta),
             template=children[0],
             name=str(children[2]),
             params=tuple(children[3]),
@@ -97,108 +139,126 @@ class TreeToAST(Transformer):
             body=children[5],
         )
 
-    def class_decl(self, children):
+    def class_decl(self, meta, children):
         # children: [template_or_None, CLASS, IDENT, depent_interfaces_or_None, LBRACE, class_body, RBRACE]
         return ClassDecl(
+            span=_span_from_meta(meta),
             template=children[0],
             name=str(children[2]),
             interfaces=tuple(children[3]) if children[3] is not None else (),
             body=children[5],
         )
 
-    def interface_decl(self, children):
+    def interface_decl(self, meta, children):
         # children: [template_or_None, INTERFACE, IDENT, depent_interfaces_or_None,
         #             LBRACE, method..., RBRACE]
         # `?interface_body` is inlined, so the methods are direct children
         # between LBRACE (idx 5) and RBRACE (last).
         methods = tuple(c for c in children[5:-1] if not _is_token(c))
         return InterfaceDecl(
+            span=_span_from_meta(meta),
             template=children[0],
             name=str(children[2]),
             interfaces=tuple(children[3]) if children[3] is not None else (),
-            body=InterfaceBody(methods=methods),
+            body=InterfaceBody(span=_span_from_meta(meta), methods=methods),
         )
 
     # ---- Templates --------------------------------------------------------
-    def template_decl(self, children):
+    def template_decl(self, meta, children):
         # children: [TEMPLATE, LANGLE, template_member (COMMA template_member)*, RANGLE]
         members = tuple(c for c in children[2:-1] if not _is_token(c))
-        return TemplateDecl(members=members)
+        return TemplateDecl(span=_span_from_meta(meta), members=members)
 
-    def template_param(self, children):
+    def template_param(self, meta, children):
         # children: [TYPE, IDENT, depent_interfaces_or_None]
         return TypeParam(
+            span=_span_from_meta(meta),
             name=str(children[1]),
             interfaces=tuple(children[2]) if children[2] else (),
         )
 
-    def template_const(self, children):
+    def template_const(self, meta, children):
         # children: [CONST, IDENT, COLON, type, EQ_expression_or_None]
         return ConstParam(
+            span=_span_from_meta(meta),
             name=str(children[1]),
             type=children[3],
             default=children[4] if len(children) > 4 else None,
         )
 
     # ---- Helper rules -----------------------------------------------------
-    def arguments(self, children):
+    def arguments(self, meta, children):
         # children: [LPAREN, (Param (COMMA Param)*)?, RPAREN]
         # The optional inner slot is `None` when there are no params.
         params = [c for c in children[1:-1] if not _is_token(c) and c is not None]
         return params
 
-    def return_type(self, children):
+    def return_type(self, meta, children):
         # children: [COLON, type]
         return children[1]
 
-    def depent_interfaces(self, children):
+    def depent_interfaces(self, meta, children):
         # children: [COLON, interface (COMMA interface)*]
         return tuple(c for c in children[1:] if not _is_token(c))
 
-    def typed_ident(self, children):
+    def typed_ident(self, meta, children):
         # children: [IDENT, COLON, type]
-        return Param(name=str(children[0]), type=children[2])
+        return Param(
+            span=_span_from_meta(meta),
+            name=str(children[0]),
+            type=children[2],
+        )
 
     # ---- Class / interface body ------------------------------------------
-    def class_body(self, children):
-        return ClassBody(members=tuple(children))
+    def class_body(self, meta, children):
+        return ClassBody(span=_span_from_meta(meta), members=tuple(children))
 
-    def field(self, children):
+    def field(self, meta, children):
         # children: [Param, SEMICOLON]
         param = children[0]
-        return Field(name=param.name, type=param.type)
+        return Field(
+            span=_span_from_meta(meta),
+            name=param.name,
+            type=param.type,
+        )
 
-    def constructor(self, children):
+    def constructor(self, meta, children):
         # children: [CONSTRUCTOR, arguments_tree, block]
-        return Constructor(params=tuple(children[1]), body=children[2])
+        return Constructor(
+            span=_span_from_meta(meta),
+            params=tuple(children[1]),
+            body=children[2],
+        )
 
-    def destructor(self, children):
+    def destructor(self, meta, children):
         # children: [DESTRUCTOR, LPAREN, RPAREN, block]
-        return Destructor(body=children[3])
+        return Destructor(span=_span_from_meta(meta), body=children[3])
 
-    def cloner(self, children):
+    def cloner(self, meta, children):
         # children: [CLONER, LPAREN, RPAREN, block]
-        return Cloner(body=children[3])
+        return Cloner(span=_span_from_meta(meta), body=children[3])
 
-    def method(self, children):
+    def method(self, meta, children):
         # children: [IDENT, arguments_tree, return_type_or_None, block]
         return Method(
+            span=_span_from_meta(meta),
             name=str(children[0]),
             params=tuple(children[1]),
             return_type=children[2],
             body=children[3],
         )
 
-    def interface_body(self, children):
-        return InterfaceBody(methods=tuple(children))
+    def interface_body(self, meta, children):
+        return InterfaceBody(span=_span_from_meta(meta), methods=tuple(children))
 
-    def interface_method(self, children):
+    def interface_method(self, meta, children):
         # children: [IDENT, arguments_tree, return_type_or_None, block | SEMICOLON_token]
         if _is_token(children[3]):
             body = None
         else:
             body = children[3]
         return InterfaceMethod(
+            span=_span_from_meta(meta),
             name=str(children[0]),
             params=tuple(children[1]),
             return_type=children[2],
@@ -206,31 +266,32 @@ class TreeToAST(Transformer):
         )
 
     # ---- Statements -------------------------------------------------------
-    def statement(self, children):
+    def statement(self, meta, children):
         # statement has exactly one alternative that matches
         return children[0]
 
-    def block(self, children):
+    def block(self, meta, children):
         # children: [LBRACE, statement*, RBRACE]
         statements = tuple(c for c in children[1:-1] if not _is_token(c))
-        return Block(statements=statements)
+        return Block(span=_span_from_meta(meta), statements=statements)
 
-    def expression_statement(self, children):
+    def expression_statement(self, meta, children):
         # children: [expression, SEMICOLON]
-        return ExpressionStatement(expression=children[0])
+        return ExpressionStatement(span=_span_from_meta(meta), expression=children[0])
 
-    def assign_statement(self, children):
+    def assign_statement(self, meta, children):
         # children: [left_side_assign_tree, assign_operator_token, expression, SEMICOLON]
         return AssignStatement(
+            span=_span_from_meta(meta),
             target=children[0],
             op=str(children[1]),
             value=children[2],
         )
 
-    def assign_operator(self, children):
+    def assign_operator(self, meta, children):
         return children[0]  # pass the EQ / PLUS_EQ / ... token through
 
-    def if_statement(self, children):
+    def if_statement(self, meta, children):
         # children: [IF, condition, statement, (ELSE, statement)?]
         condition = children[1]
         then_branch = children[2]
@@ -239,31 +300,41 @@ class TreeToAST(Transformer):
             # The optional is (ELSE_token, else_stmt)
             else_branch = children[4]
         return IfStatement(
-            condition=condition, then_branch=then_branch, else_branch=else_branch
+            span=_span_from_meta(meta),
+            condition=condition,
+            then_branch=then_branch,
+            else_branch=else_branch,
         )
 
-    def while_statement(self, children):
+    def while_statement(self, meta, children):
         # children: [WHILE, condition, statement]
-        return WhileStatement(condition=children[1], body=children[2])
+        return WhileStatement(
+            span=_span_from_meta(meta),
+            condition=children[1],
+            body=children[2],
+        )
 
-    def for_statement(self, children):
+    def for_statement(self, meta, children):
         # children: [FOR, iteration_variable, COLON, expression, statement]
         return ForStatement(
-            variable=children[1], iterable=children[3], body=children[4]
+            span=_span_from_meta(meta),
+            variable=children[1],
+            iterable=children[3],
+            body=children[4],
         )
 
-    def break_statement(self, children):
-        return BreakStatement()
+    def break_statement(self, meta, children):
+        return BreakStatement(span=_span_from_meta(meta))
 
-    def continue_statement(self, children):
-        return ContinueStatement()
+    def continue_statement(self, meta, children):
+        return ContinueStatement(span=_span_from_meta(meta))
 
-    def return_statement(self, children):
+    def return_statement(self, meta, children):
         # children: [RETURN, expression_or_None, SEMICOLON]
         value = children[1] if len(children) > 1 and children[1] is not None else None
-        return ReturnStatement(value=value)
+        return ReturnStatement(span=_span_from_meta(meta), value=value)
 
-    def left_side_assign(self, children):
+    def left_side_assign(self, meta, children):
         # children: [IDENT] (single name)
         #   or   [IDENT, LBRACKET, expression, RBRACKET] (indexed)
         #   or   [LPAREN, IDENT (COMMA IDENT)*, RPAREN] (tuple lvalue)
@@ -271,124 +342,159 @@ class TreeToAST(Transformer):
         if len(children) == 1:
             if isinstance(children[0], MemberLValue):
                 return children[0]
-            return Name(name=str(children[0]))
+            return Name(span=_span_from_meta(meta), name=str(children[0]))
         if _is_token(children[0]) and str(children[0]) == "(":
             names = tuple(str(c) for c in children if not _is_token(c))
-            return TupleLValue(names=names)
+            return TupleLValue(span=_span_from_meta(meta), names=names)
         # IDENT LBRACKET expr RBRACKET
-        return IndexLValue(obj=Name(name=str(children[0])), index=children[2])
+        return IndexLValue(
+            span=_span_from_meta(meta),
+            obj=Name(span=_span_from_token(children[0]), name=str(children[0])),
+            index=children[2],
+        )
 
-    def member_lvalue(self, children):
+    def member_lvalue(self, meta, children):
         # children: [IDENT, DOT, IDENT]
-        return MemberLValue(obj=Name(name=str(children[0])), name=str(children[2]))
+        return MemberLValue(
+            span=_span_from_meta(meta),
+            obj=Name(span=_span_from_token(children[0]), name=str(children[0])),
+            name=str(children[2]),
+        )
 
-    def iteration_variable(self, children):
+    def iteration_variable(self, meta, children):
         # children: [IDENT] (single)
         #   or   [LPAREN, IDENT (COMMA IDENT)*, RPAREN] (tuple)
         if len(children) == 1:
-            return Name(name=str(children[0]))
+            return Name(span=_span_from_meta(meta), name=str(children[0]))
         names = tuple(str(c) for c in children if not _is_token(c))
-        return TupleLValue(names=names)
+        return TupleLValue(span=_span_from_meta(meta), names=names)
 
     # ---- Types ------------------------------------------------------------
-    def simple_type(self, children):
-        return SimpleType(name=str(children[0]))
+    def simple_type(self, meta, children):
+        return SimpleType(span=_span_from_meta(meta), name=str(children[0]))
 
-    def tuple_type(self, children):
+    def tuple_type(self, meta, children):
         # children: [LPAREN, (type (COMMA type)*)?, RPAREN]
         types = tuple(c for c in children[1:-1] if not _is_token(c))
-        return TupleType(types=types)
+        return TupleType(span=_span_from_meta(meta), types=types)
 
-    def generic_type(self, children):
+    def generic_type(self, meta, children):
         # children: [TYPE_IDENT, LANGLE, type (COMMA (type|expression))*, RANGLE]
         name = str(children[0])
         args = tuple(c for c in children[2:-1] if not _is_token(c))
-        return GenericType(name=name, args=args)
+        return GenericType(span=_span_from_meta(meta), name=name, args=args)
 
-    def maybe_type(self, children):
+    def maybe_type(self, meta, children):
         # children: [type, MAYBE]
-        return MaybeType(inner=children[0])
+        return MaybeType(span=_span_from_meta(meta), inner=children[0])
 
-    def interface(self, children):
+    def interface(self, meta, children):
         # children: [TYPE_IDENT]  (single name)
         #   or   [TYPE_IDENT, LANGLE, type (COMMA (type|expression))*, RANGLE]
         name = str(children[0])
         if len(children) == 1:
-            return SimpleType(name=name)
+            return SimpleType(span=_span_from_meta(meta), name=name)
         args = tuple(c for c in children[2:-1] if not _is_token(c))
-        return GenericType(name=name, args=args)
+        return GenericType(span=_span_from_meta(meta), name=name, args=args)
 
     # ---- Expressions ------------------------------------------------------
-    def binary_op(self, children):
+    def binary_op(self, meta, children):
         # children: [left, op_token, right]
-        return BinaryOp(op=str(children[1]), left=children[0], right=children[2])
+        return BinaryOp(
+            span=_span_from_meta(meta),
+            op=str(children[1]),
+            left=children[0],
+            right=children[2],
+        )
 
-    def unary_pre_op(self, children):
+    def unary_pre_op(self, meta, children):
         # children: [op_token, operand]
-        return UnaryOp(op=str(children[0]), operand=children[1])
+        return UnaryOp(
+            span=_span_from_meta(meta),
+            op=str(children[0]),
+            operand=children[1],
+        )
 
-    def conditional(self, children):
+    def conditional(self, meta, children):
         # Two shapes from `?conditional`:
         #   * pass-through (no IF/ELSE): children == [or_expr_passthrough]
         #   * IF/ELSE form: children == [cond, IF, then, ELSE, else_cond]
         if len(children) == 1:
             return children[0]
         return Conditional(
+            span=_span_from_meta(meta),
             condition=children[0],
             then_expr=children[2],
             else_expr=children[4],
         )
 
-    def indexing(self, children):
+    def indexing(self, meta, children):
         # children: [obj, LBRACKET, index, RBRACKET]
-        return Indexing(obj=children[0], index=children[2])
+        return Indexing(
+            span=_span_from_meta(meta),
+            obj=children[0],
+            index=children[2],
+        )
 
-    def method_call(self, children):
+    def method_call(self, meta, children):
         # children: [obj, DOT, IDENT, LPAREN, args_or_None, RPAREN]
         args = tuple(children[4]) if children[4] is not None else ()
-        return MethodCall(obj=children[0], name=str(children[2]), args=args)
+        return MethodCall(
+            span=_span_from_meta(meta),
+            obj=children[0],
+            name=str(children[2]),
+            args=args,
+        )
 
-    def maybe_unwrap(self, children):
+    def maybe_unwrap(self, meta, children):
         # children: [expr, MAYBE]
-        return MaybeUnwrap(expr=children[0])
+        return MaybeUnwrap(span=_span_from_meta(meta), expr=children[0])
 
-    def member_access(self, children):
+    def member_access(self, meta, children):
         # children: [obj, DOT, IDENT]
-        return MemberAccess(obj=children[0], name=str(children[2]))
+        return MemberAccess(
+            span=_span_from_meta(meta),
+            obj=children[0],
+            name=str(children[2]),
+        )
 
-    def int_literal(self, children):
-        return IntLiteral(value=int(str(children[0])))
+    def int_literal(self, meta, children):
+        return IntLiteral(span=_span_from_meta(meta), value=int(str(children[0])))
 
-    def float_literal(self, children):
-        return FloatLiteral(value=float(str(children[0])))
+    def float_literal(self, meta, children):
+        return FloatLiteral(span=_span_from_meta(meta), value=float(str(children[0])))
 
-    def string_literal(self, children):
-        return StringLiteral(value=_strip_quotes(str(children[0])))
+    def string_literal(self, meta, children):
+        return StringLiteral(span=_span_from_meta(meta), value=_strip_quotes(str(children[0])))
 
-    def char_literal(self, children):
-        return CharLiteral(value=_strip_quotes(str(children[0])))
+    def char_literal(self, meta, children):
+        return CharLiteral(span=_span_from_meta(meta), value=_strip_quotes(str(children[0])))
 
-    def bool_literal(self, children):
-        return BoolLiteral(value=str(children[0]) == "true")
+    def bool_literal(self, meta, children):
+        return BoolLiteral(span=_span_from_meta(meta), value=str(children[0]) == "true")
 
-    def function_call(self, children):
+    def function_call(self, meta, children):
         # children: [IDENT, LPAREN, args_or_None, RPAREN]
         args = tuple(children[2]) if children[2] is not None else ()
-        return FunctionCall(name=str(children[0]), args=args)
+        return FunctionCall(
+            span=_span_from_meta(meta),
+            name=str(children[0]),
+            args=args,
+        )
 
-    def name(self, children):
-        return Name(name=str(children[0]))
+    def name(self, meta, children):
+        return Name(span=_span_from_meta(meta), name=str(children[0]))
 
-    def paren_expr(self, children):
+    def paren_expr(self, meta, children):
         # children: [LPAREN, expression, RPAREN]
-        return ParenExpr(expr=children[1])
+        return ParenExpr(span=_span_from_meta(meta), expr=children[1])
 
-    def array_literal(self, children):
+    def array_literal(self, meta, children):
         # children: [LBRACKET, (expression (COMMA expression)*)?, RBRACKET]
         elements = tuple(c for c in children[1:-1] if not _is_token(c))
-        return ArrayLiteral(elements=elements)
+        return ArrayLiteral(span=_span_from_meta(meta), elements=elements)
 
-    def args(self, children):
+    def args(self, meta, children):
         # children: [expr, COMMA, expr, COMMA, ...] — filter COMMA tokens
         return tuple(c for c in children if not _is_token(c))
 
@@ -396,6 +502,9 @@ class TreeToAST(Transformer):
     # Many grammar rules are simple one-child wrappers (the alternatives
     # of `?or_expr`, `?and_expr`, `?unary_expr`'s "passthrough" branch,
     # etc.). When the child has already been transformed, just return it.
+    # This is reached via ``_call_userfunc``'s ``AttributeError`` branch
+    # (the wrapper only fires for methods that exist on the class), so
+    # the ``(data, children, meta)`` signature is preserved here.
     def __default__(self, data, children, meta):
         if len(children) == 1:
             return children[0]

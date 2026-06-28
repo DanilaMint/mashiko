@@ -5,6 +5,12 @@ instances of these frozen dataclasses. Every node is immutable and
 hashable; equality and repr are value-based. Types are written using
 ``from __future__ import annotations`` so forward references resolve at
 runtime via the module-level ``_collect_types`` helper.
+
+Every AST node inherits from :class:`Node` and carries a :class:`Span`
+recording the source range it covers: character offsets
+(``start_pos``/``end_pos``, end-exclusive) plus 1-based line/column at
+both ends. Spans are produced by the transformer from Lark's per-rule
+metadata.
 """
 
 from __future__ import annotations
@@ -12,16 +18,47 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Union
 
+# ---- Common -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Span:
+    """Source range covered by an AST node.
+
+    ``start_pos``/``end_pos`` are zero-based character offsets in the
+    original source string (``end_pos`` is exclusive). ``start_line`` /
+    ``start_column`` / ``end_line`` / ``end_column`` are 1-based.
+    """
+
+    start_pos: int
+    end_pos: int
+    start_line: int
+    start_column: int
+    end_line: int
+    end_column: int
+
+
+@dataclass(frozen=True)
+class Node:
+    """Base class for every AST node.
+
+    Subclasses inherit ``span`` as the first field, so every constructor
+    takes ``span=...`` before its own keyword arguments.
+    """
+
+    span: Span
+
+
 # ---- Module & declarations ---------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Module:
+class Module(Node):
     declarations: tuple[Declaration, ...]
 
 
 @dataclass(frozen=True)
-class FunctionDecl:
+class FunctionDecl(Node):
     template: Optional[TemplateDecl]
     name: str
     params: tuple[Param, ...]
@@ -30,7 +67,7 @@ class FunctionDecl:
 
 
 @dataclass(frozen=True)
-class ClassDecl:
+class ClassDecl(Node):
     template: Optional[TemplateDecl]
     name: str
     interfaces: tuple[InterfaceRef, ...]
@@ -38,7 +75,7 @@ class ClassDecl:
 
 
 @dataclass(frozen=True)
-class InterfaceDecl:
+class InterfaceDecl(Node):
     template: Optional[TemplateDecl]
     name: str
     interfaces: tuple[InterfaceRef, ...]
@@ -46,25 +83,24 @@ class InterfaceDecl:
 
 
 @dataclass(frozen=True)
-class TypeParam:
+class TypeParam(Node):
     name: str
     interfaces: tuple[InterfaceRef, ...]
 
 
 @dataclass(frozen=True)
-class ConstParam:
+class ConstParam(Node):
     name: str
     type: Type
     default: Optional[Expression]
 
 
 @dataclass(frozen=True)
-class TemplateDecl:
+class TemplateDecl(Node):
     members: tuple[TemplateMember, ...]
 
 
 TemplateMember = Union[TypeParam, ConstParam]
-
 
 
 
@@ -76,34 +112,34 @@ Declaration = Union[FunctionDecl, ClassDecl, InterfaceDecl]
 
 
 @dataclass(frozen=True)
-class ClassBody:
+class ClassBody(Node):
     members: tuple[ClassMember, ...]
 
 
 @dataclass(frozen=True)
-class Field:
+class Field(Node):
     name: str
     type: Type
 
 
 @dataclass(frozen=True)
-class Constructor:
+class Constructor(Node):
     params: tuple[Param, ...]
     body: Block
 
 
 @dataclass(frozen=True)
-class Destructor:
+class Destructor(Node):
     body: Block
 
 
 @dataclass(frozen=True)
-class Cloner:
+class Cloner(Node):
     body: Block
 
 
 @dataclass(frozen=True)
-class Method:
+class Method(Node):
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]
@@ -117,12 +153,12 @@ ClassMember = Union[Field, Constructor, Destructor, Cloner, Method]
 
 
 @dataclass(frozen=True)
-class InterfaceBody:
+class InterfaceBody(Node):
     methods: tuple[InterfaceMethod, ...]
 
 
 @dataclass(frozen=True)
-class InterfaceMethod:
+class InterfaceMethod(Node):
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]
@@ -133,7 +169,7 @@ class InterfaceMethod:
 
 
 @dataclass(frozen=True)
-class Param:
+class Param(Node):
     name: str
     type: Type
 
@@ -142,23 +178,23 @@ class Param:
 
 
 @dataclass(frozen=True)
-class SimpleType:
+class SimpleType(Node):
     name: str
 
 
 @dataclass(frozen=True)
-class TupleType:
+class TupleType(Node):
     types: tuple[Type, ...]
 
 
 @dataclass(frozen=True)
-class GenericType:
+class GenericType(Node):
     name: str
     args: tuple[Union[Type, Expression], ...]
 
 
 @dataclass(frozen=True)
-class MaybeType:
+class MaybeType(Node):
     inner: Type
 
 
@@ -173,54 +209,54 @@ Type = Union[SimpleType, TupleType, GenericType, MaybeType]
 
 
 @dataclass(frozen=True)
-class Block:
+class Block(Node):
     statements: tuple[Statement, ...]
 
 
 @dataclass(frozen=True)
-class AssignStatement:
+class AssignStatement(Node):
     target: AssignTarget
     op: str
     value: Expression
 
 
 @dataclass(frozen=True)
-class ExpressionStatement:
+class ExpressionStatement(Node):
     expression: Expression
 
 
 @dataclass(frozen=True)
-class IfStatement:
+class IfStatement(Node):
     condition: Expression
     then_branch: Statement
     else_branch: Optional[Statement]
 
 
 @dataclass(frozen=True)
-class WhileStatement:
+class WhileStatement(Node):
     condition: Expression
     body: Statement
 
 
 @dataclass(frozen=True)
-class ForStatement:
+class ForStatement(Node):
     variable: IterationVariable
     iterable: Expression
     body: Statement
 
 
 @dataclass(frozen=True)
-class BreakStatement:
+class BreakStatement(Node):
     pass
 
 
 @dataclass(frozen=True)
-class ContinueStatement:
+class ContinueStatement(Node):
     pass
 
 
 @dataclass(frozen=True)
-class ReturnStatement:
+class ReturnStatement(Node):
     value: Optional[Expression]
 
 
@@ -241,23 +277,23 @@ Statement = Union[
 
 
 @dataclass(frozen=True)
-class Name:
+class Name(Node):
     name: str
 
 
 @dataclass(frozen=True)
-class IndexLValue:
+class IndexLValue(Node):
     obj: Name
     index: Expression
 
 
 @dataclass(frozen=True)
-class TupleLValue:
+class TupleLValue(Node):
     names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
-class MemberLValue:
+class MemberLValue(Node):
     obj: Name
     name: str
 
@@ -270,87 +306,87 @@ IterationVariable = Union[Name, TupleLValue]
 
 
 @dataclass(frozen=True)
-class IntLiteral:
+class IntLiteral(Node):
     value: int
 
 
 @dataclass(frozen=True)
-class FloatLiteral:
+class FloatLiteral(Node):
     value: float
 
 
 @dataclass(frozen=True)
-class StringLiteral:
+class StringLiteral(Node):
     value: str
 
 
 @dataclass(frozen=True)
-class CharLiteral:
+class CharLiteral(Node):
     value: str
 
 
 @dataclass(frozen=True)
-class BoolLiteral:
+class BoolLiteral(Node):
     value: bool
 
 
 @dataclass(frozen=True)
-class FunctionCall:
+class FunctionCall(Node):
     name: str
     args: tuple[Expression, ...]
 
 
 @dataclass(frozen=True)
-class MethodCall:
+class MethodCall(Node):
     obj: Expression
     name: str
     args: tuple[Expression, ...]
 
 
 @dataclass(frozen=True)
-class Indexing:
+class Indexing(Node):
     obj: Expression
     index: Expression
 
 
 @dataclass(frozen=True)
-class MaybeUnwrap:
+class MaybeUnwrap(Node):
     expr: Expression
 
 
 @dataclass(frozen=True)
-class MemberAccess:
+class MemberAccess(Node):
     obj: Expression
     name: str
 
 
 @dataclass(frozen=True)
-class BinaryOp:
+class BinaryOp(Node):
     op: str
     left: Expression
     right: Expression
 
 
 @dataclass(frozen=True)
-class UnaryOp:
+class UnaryOp(Node):
     op: str
     operand: Expression
 
 
 @dataclass(frozen=True)
-class Conditional:
+class Conditional(Node):
     condition: Expression
     then_expr: Expression
     else_expr: Expression
 
 
 @dataclass(frozen=True)
-class ParenExpr:
+class ParenExpr(Node):
     expr: Expression
 
 
 @dataclass(frozen=True)
-class ArrayLiteral:
+class ArrayLiteral(Node):
     elements: tuple[Expression, ...]
 
 

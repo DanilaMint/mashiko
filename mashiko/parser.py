@@ -53,6 +53,9 @@ def _get_parser() -> Lark:
             _load_grammar(),
             parser="earley",
             ambiguity="explicit",
+            # Populate Tree.meta with start_pos/end_pos/line/column/... so
+            # the transformer can attach a Span to every AST node.
+            propagate_positions=True,
         )
     return _PARSER
 
