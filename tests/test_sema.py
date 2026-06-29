@@ -86,7 +86,10 @@ class DuplicateFunctionNameTests(unittest.TestCase):
     """``SemanticAnalyzer._preregistry`` flags duplicate function names."""
 
     def _check(self, source: str) -> list[TranslationError] | None:
-        return SemanticAnalyzer(parse_ast(source))._preregistry()
+        module, errors = parse_ast(source)
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(module)
+        return SemanticAnalyzer(module)._preregistry()
 
     def test_unique_function_names_pass(self):
         src = (

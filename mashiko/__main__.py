@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .errors import ParseError
 from .parser import parse_ast_file, parse_file
 
 
@@ -39,19 +38,20 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.ast_typed:
-            module = parse_ast_file(args.file)
+            result, errors = parse_ast_file(args.file)
         else:
-            tree = parse_file(args.file)
+            result, errors = parse_file(args.file)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except ParseError as e:
-        print(f"parse error: {e}", file=sys.stderr)
+    if errors:
+        for err in errors:
+            print(f"parse error: {err}", file=sys.stderr)
         return 1
     if args.ast_typed:
-        print(module)
+        print(result)
     elif args.ast:
-        print(tree.pretty())
+        print(result.pretty())
     else:
         print(f"OK: {args.file}", file=sys.stderr)
     return 0

@@ -1,9 +1,20 @@
-from .syntax import Span
+"""Diagnostic types for mashiko's front-end.
+
+Spans live with the AST in :mod:`mashiko.parser.syntax`, so to avoid a
+circular ``parser`` <-> ``errors`` import at module load time the import
+is deferred to inside the helpers that actually need to construct a
+``Span`` (and class annotations are kept as forward references via
+``from __future__ import annotations``).
+"""
+
+from __future__ import annotations
 
 _SEPARATOR = "-" * 80
 
 
-def _span_from_lark_error(e: Exception) -> Span:
+def _span_from_lark_error(e: Exception) -> "Span":
+    from .parser.syntax import Span  # deferred to break import cycle
+
     pos = getattr(e, "pos_in_stream", 0) or 0
     line = getattr(e, "line", 1) or 1
     column = getattr(e, "column", 1) or 1
@@ -13,9 +24,9 @@ def _span_from_lark_error(e: Exception) -> Span:
 class TranslationError(Exception):
     """Common type for error cathed dyring translation process"""
 
-    span: Span
+    span: "Span"
 
-    def __init__(self, span: Span) -> None:
+    def __init__(self, span: "Span") -> None:
         self.span = span
 
     def into_str(self, src_code: str) -> str:
@@ -73,6 +84,13 @@ class ParseError(TranslationError):
     ``__str__``. The original exception is reachable as ``self.lark_error``
     for callers that want to call ``Lark``'s ``get_context()`` or inspect
     the offending token directly.
+
+    Since the front-end moved to "errors-list" reporting
+    (``parse_string`` / ``parse_ast`` return ``(result, errors)`` instead
+    of raising) this class is normally *returned* in the ``errors``
+    list, not raised — but the call shape is preserved so any old
+    ``except ParseError`` blocks degrade gracefully if a parsed file
+    contains an unexpected exception.
     """
 
     def __init__(self, lark_error: Exception) -> None:
@@ -94,7 +112,7 @@ class NameError(TranslationError):
 
     ident: str
 
-    def __init__(self, span: Span, ident: str):
+    def __init__(self, span: "Span", ident: str):
         self.span = span
 
     def additional_message(self) -> str:

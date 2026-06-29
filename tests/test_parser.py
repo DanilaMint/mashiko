@@ -21,8 +21,7 @@ KNOWN_FAILURES and the test flips from ``skipped`` to ``ok``.
 import unittest
 from pathlib import Path
 
-from mashiko import ParseError, parse_string
-from mashiko.parser import parse_file
+from mashiko.parser import parse_file, parse_string
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 
@@ -40,7 +39,8 @@ class ExampleParseTests(unittest.TestCase):
         path = _example_path(name)
         if name in KNOWN_FAILURES:
             self.skipTest(KNOWN_FAILURES[name])
-        tree = parse_file(path)
+        tree, errors = parse_file(path)
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_box(self):
@@ -60,56 +60,68 @@ class APITests(unittest.TestCase):
     """Smoke tests for the parser API itself."""
 
     def test_parser_constructs(self):
-        from mashiko.parser import _get_parser
+        from mashiko.parser.parser import _get_parser
 
         _get_parser()
 
     def test_parse_string_simple(self):
-        tree = parse_string("func f() { x = 1; }")
+        tree, errors = parse_string("func f() { x = 1; }")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_parse_string_empty(self):
-        tree = parse_string("")
+        tree, errors = parse_string("")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
-    def test_parse_string_invalid_raises(self):
-        with self.assertRaises(ParseError):
-            parse_string("@@@")
+    def test_parse_string_invalid_returns_error_in_list(self):
+        tree, errors = parse_string("@@@")
+        self.assertIsNone(tree)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ParseError", type(errors[0]).__name__)
 
 
 class CommentTests(unittest.TestCase):
     """Line (//) and block (/* */) comments are skipped during lexing."""
 
     def test_line_comment_between_tokens(self):
-        tree = parse_string("func f() { // ignore me\n  x = 1; }")
+        tree, errors = parse_string("func f() { // ignore me\n  x = 1; }")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_block_comment_between_tokens(self):
-        tree = parse_string("func f() { /* ignore me */ x = 1; }")
+        tree, errors = parse_string("func f() { /* ignore me */ x = 1; }")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_line_comment_only(self):
-        tree = parse_string("// just a comment\n")
+        tree, errors = parse_string("// just a comment\n")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_block_comment_only(self):
-        tree = parse_string("/* just a comment */")
+        tree, errors = parse_string("/* just a comment */")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_multiline_block_comment(self):
-        tree = parse_string("/* line1\nline2\nline3 */ func f() { x = 1; }")
+        tree, errors = parse_string("/* line1\nline2\nline3 */ func f() { x = 1; }")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_trailing_line_comment(self):
-        tree = parse_string("func f() { x = 1; // trailing\n }")
+        tree, errors = parse_string("func f() { x = 1; // trailing\n }")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_multiple_line_comments(self):
-        tree = parse_string("// one\n// two\n// three\n")
+        tree, errors = parse_string("// one\n// two\n// three\n")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
     def test_empty_block_comment(self):
-        tree = parse_string("/**/")
+        tree, errors = parse_string("/**/")
+        self.assertEqual(errors, [])
         self.assertEqual(tree.data, "module")
 
 

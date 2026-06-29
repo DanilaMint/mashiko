@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from mashiko import parse_ast, parse_ast_file
-from mashiko.syntax import (
+from mashiko.parser.syntax import (
     BinaryOp,
     Block,
     ClassBody,
@@ -38,7 +38,11 @@ class InterfacesASTTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.module = parse_ast_file(EXAMPLES_DIR / "interfaces.msk")
+        cls.module, cls.errors = parse_ast_file(EXAMPLES_DIR / "interfaces.msk")
+
+    def setUp(self):
+        self.assertEqual(self.errors, [])
+        self.assertIsNotNone(self.module)
 
     def test_module_shape(self):
         self.assertIsInstance(self.module, Module)
@@ -78,7 +82,11 @@ class FindSuperPrimeASTTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.module = parse_ast_file(EXAMPLES_DIR / "find_super_prime.msk")
+        cls.module, cls.errors = parse_ast_file(EXAMPLES_DIR / "find_super_prime.msk")
+
+    def setUp(self):
+        self.assertEqual(self.errors, [])
+        self.assertIsNotNone(self.module)
 
     def test_two_functions(self):
         self.assertEqual(len(self.module.declarations), 2)
@@ -154,18 +162,21 @@ class FindSuperPrimeASTTests(unittest.TestCase):
 
 class APITests(unittest.TestCase):
     def test_parse_ast_returns_module(self):
-        m = parse_ast("func f() { x = 1; }")
+        m, errors = parse_ast("func f() { x = 1; }")
+        self.assertEqual(errors, [])
         self.assertIsInstance(m, Module)
         self.assertEqual(len(m.declarations), 1)
 
     def test_parse_ast_empty_source(self):
-        m = parse_ast("")
+        m, errors = parse_ast("")
+        self.assertEqual(errors, [])
         self.assertIsInstance(m, Module)
         self.assertEqual(m.declarations, ())
 
     def test_parse_ast_literals_and_names(self):
         # `1 + 2.5` → BinaryOp(+, IntLiteral, FloatLiteral)
-        m = parse_ast("func f() { return 1 + 2.5; }")
+        m, errors = parse_ast("func f() { return 1 + 2.5; }")
+        self.assertEqual(errors, [])
         f = m.declarations[0]
         ret = f.body.statements[0]
         self.assertIsInstance(ret, ReturnStatement)

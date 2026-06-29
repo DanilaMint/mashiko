@@ -1,4 +1,16 @@
-"""Lark-based parser for the mashiko language."""
+"""Lark-based parser for the mashiko language.
+
+Each public function returns ``(result, errors)`` rather than raising:
+
+* on success — ``(tree_or_module, [])``
+* on failure — ``(None, [ParseError(...)])``
+
+Callers iterate ``errors`` (it is a list for forward compatibility, even
+though the Earley parser produces at most one error per attempt) and
+inspect ``result`` only when ``errors`` is empty. ``FileNotFoundError``
+is still raised from the ``parse_file*`` variants because it is an I/O
+issue, not a parsing issue.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +30,9 @@ if TYPE_CHECKING:
     from lark import Tree
 
     from .syntax import Module
+
+ParserResult = tuple["Tree | None", list[ParseError]]
+ASTResult = tuple["Module | None", list[ParseError]]
 
 
 _GRAMMAR_NAME = "grammar.lark"
@@ -60,43 +75,60 @@ def _get_parser() -> Lark:
     return _PARSER
 
 
-def parse_string(source: str) -> "Tree":
-    """Parse a mashiko source string and return the Lark ``Tree``.
+def parse_string(source: str) -> ParserResult:
+    """Parse a mashiko source string.
 
-    Raises :class:`~mashiko.errors.ParseError` on syntax errors.
+    Returns ``(tree, errors)``. On success ``errors`` is empty; on a
+    syntax error ``tree`` is ``None`` and ``errors`` contains a single
+    :class:`~mashiko.errors.ParseError`.
     """
+    errors: list[ParseError] = []
     try:
-        return _get_parser().parse(source, start="start")
+        tree: Tree | None = _get_parser().parse(source, start="start")
     except LarkError as e:
-        raise ParseError(e) from e
+        errors.append(ParseError(e))
+        return None, errors
+    return tree, errors
 
 
-def parse_file(path: str | Path) -> "Tree":
+def parse_file(path: str | Path) -> ParserResult:
     """Read ``path`` and parse it as mashiko source.
 
-    Raises :class:`~mashiko.errors.ParseError` on syntax errors and
-    ``FileNotFoundError`` if the file does not exist.
+    See :func:`parse_string` for the return shape. Raises
+    ``FileNotFoundError`` (and other I/O errors) — those are not parsing
+    errors.
     """
     p = Path(path)
     source = p.read_text(encoding="utf-8")
-    try:
-        return _get_parser().parse(source, start="start")
-    except LarkError as e:
-        raise ParseError(e) from e
+    return parse_string(source)
 
 
-def parse_ast(source: str) -> "Module":
-    """Parse ``source`` and return the typed AST (:class:`~mashiko.syntax.Module`).
+def parse_ast(source: str) -> ASTResult:
+    """Parse ``source`` and build the typed AST.
 
-    The tree is transformed by :class:`~mashiko.transformer.TreeToAST`;
-    the returned value is a tree of frozen dataclasses (not a Lark ``Tree``).
+    Returns ``(module, errors)`` where ``errors`` aggregates parse
+    failures (and any unexpected transformer errors) into the list.
     """
-    tree = parse_string(source)
-    return TreeToAST().transform(tree)
+    tree, errors = parse_string(source)
+    if errors:
+        return None, errors
+    try:
+        module: Module | None = TreeToAST().transform(tree)
+    except Exception as e:
+        # The transformer should normally succeed on a valid Lark tree;
+        # wrap any unexpected failure as a ParseError so the caller's
+        # uniform error-handling path still applies.
+        errors.append(ParseError(e))
+        return None, errors
+    return module, errors
 
 
-def parse_ast_file(path: str | Path) -> "Module":
-    """Read ``path`` and return its typed AST (:class:`~mashiko.syntax.Module`)."""
+def parse_ast_file(path: str | Path) -> ASTResult:
+    """Read ``path`` and return its typed AST.
+
+    See :func:`parse_ast` for the return shape. Raises
+    ``FileNotFoundError`` for I/O errors.
+    """
     p = Path(path)
     source = p.read_text(encoding="utf-8")
     return parse_ast(source)
