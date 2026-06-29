@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from lark import Lark
 from lark.exceptions import LarkError
 
-from .errors import ParseError
+from ..errors import ParseError
 from .transformer import TreeToAST
 
 __all__ = ["parse_file", "parse_string", "parse_ast", "parse_ast_file"]
@@ -32,8 +32,8 @@ _GRAMMAR_PREFIX = (
     '%ignore "\\t"\n'
     '%ignore "\\n"\n'
     '%ignore "\\r"\n'
-    '%ignore LINE_COMMENT\n'
-    '%ignore BLOCK_COMMENT\n'
+    "%ignore LINE_COMMENT\n"
+    "%ignore BLOCK_COMMENT\n"
     "\n"
 )
 
