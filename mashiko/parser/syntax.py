@@ -16,6 +16,7 @@ metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Union
 
 from ..span import Span
@@ -352,16 +353,68 @@ class MemberAccess(Node):
     name: str
 
 
+class BinaryOpKind(Enum):
+    LOGICAL_OR = "||"
+    LOGICAL_AND = "&&"
+    BITWISE_OR = "|"
+    BITWISE_XOR = "^"
+    BITWISE_AND = "&"
+    EQUAL = "=="
+    NOT_EQUAL = "!="
+    LESS = "<"
+    GREATER = ">"
+    LESS_EQUAL = "<="
+    GREATER_EQUAL = ">="
+    ADD = "+"
+    SUBTRACT = "-"
+    MULTIPLY = "*"
+    DIVIDE = "/"
+    MODULO = "%"
+
+    @staticmethod
+    def from_token(token: str) -> "BinaryOpKind":
+        match token:
+            case "||": return BinaryOpKind.LOGICAL_OR
+            case "&&": return BinaryOpKind.LOGICAL_AND
+            case "|": return BinaryOpKind.BITWISE_OR
+            case "^": return BinaryOpKind.BITWISE_XOR
+            case "&": return BinaryOpKind.BITWISE_AND
+            case "==": return BinaryOpKind.EQUAL
+            case "!=": return BinaryOpKind.NOT_EQUAL
+            case "<": return BinaryOpKind.LESS
+            case ">": return BinaryOpKind.GREATER
+            case "<=": return BinaryOpKind.LESS_EQUAL
+            case ">=": return BinaryOpKind.GREATER_EQUAL
+            case "+": return BinaryOpKind.ADD
+            case "-": return BinaryOpKind.SUBTRACT
+            case "*": return BinaryOpKind.MULTIPLY
+            case "/": return BinaryOpKind.DIVIDE
+            case "%": return BinaryOpKind.MODULO
+            case _: raise ValueError(f"Unknown binary operator: {token!r}")
+
+
+class UnaryOpKind(Enum):
+    NEGATE = "-"
+    NOT = "!"
+
+    @staticmethod
+    def from_token(token: str) -> "UnaryOpKind":
+        match token:
+            case "-": return UnaryOpKind.NEGATE
+            case "!": return UnaryOpKind.NOT
+            case _: raise ValueError(f"Unknown unary operator: {token!r}")
+
+
 @dataclass(frozen=True)
 class BinaryOp(Node):
-    op: str
+    op: BinaryOpKind
     left: Expression
     right: Expression
 
 
 @dataclass(frozen=True)
 class UnaryOp(Node):
-    op: str
+    op: UnaryOpKind
     operand: Expression
 
 

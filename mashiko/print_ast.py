@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import fields as dc_fields
+from enum import Enum
 from typing import IO, Any, Iterable, Optional
 
 from .errors import ParseError
@@ -113,6 +114,8 @@ def _short_summary(node: Any) -> tuple[str, frozenset[str]]:
     op_attr = getattr(node, "op", None)
     if isinstance(op_attr, str):
         return f"{cls} op={op_attr!r}", frozenset({"op"})
+    if isinstance(op_attr, Enum):
+        return f"{cls} op={op_attr.value!r}", frozenset({"op"})
     if cls.endswith("Literal"):
         v = getattr(node, "value", None)
         if isinstance(v, (int, float, bool, str)):

@@ -10,6 +10,7 @@ from pathlib import Path
 from mashiko import parse_ast, parse_ast_file
 from mashiko.parser.syntax import (
     BinaryOp,
+    BinaryOpKind,
     Block,
     ClassBody,
     ClassDecl,
@@ -114,7 +115,7 @@ class FindSuperPrimeASTTests(unittest.TestCase):
         stmt = self.module.declarations[0].body.statements[0]
         self.assertIsInstance(stmt, IfStatement)
         self.assertIsInstance(stmt.condition, BinaryOp)
-        self.assertEqual(stmt.condition.op, "<")
+        self.assertEqual(stmt.condition.op, BinaryOpKind.LESS)
         self.assertEqual(type(stmt.condition.left).__name__, "Name")
         self.assertEqual(stmt.condition.left.name, "n")
         self.assertIsInstance(stmt.condition.right, IntLiteral)
@@ -125,7 +126,7 @@ class FindSuperPrimeASTTests(unittest.TestCase):
         self.assertIsInstance(stmt, WhileStatement)
         # acc * acc <= n  →  BinaryOp(<=, BinaryOp(*, acc, acc), n)
         self.assertIsInstance(stmt.condition, BinaryOp)
-        self.assertEqual(stmt.condition.op, "<=")
+        self.assertEqual(stmt.condition.op, BinaryOpKind.LESS_EQUAL)
 
     def test_get_super_primes_uses_generic_return_type(self):
         f = self.module.declarations[1]
@@ -182,7 +183,7 @@ class APITests(unittest.TestCase):
         self.assertIsInstance(ret, ReturnStatement)
         binop = ret.value
         self.assertIsInstance(binop, BinaryOp)
-        self.assertEqual(binop.op, "+")
+        self.assertEqual(binop.op, BinaryOpKind.ADD)
         self.assertIsInstance(binop.left, IntLiteral)
         self.assertIsInstance(binop.right, FloatLiteral)
         self.assertEqual(binop.right.value, 2.5)

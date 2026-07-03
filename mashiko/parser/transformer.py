@@ -24,6 +24,7 @@ from .syntax import (
     ArrayLiteral,
     AssignStatement,
     BinaryOp,
+    BinaryOpKind,
     Block,
     BoolLiteral,
     BreakStatement,
@@ -71,6 +72,7 @@ from .syntax import (
     Type,
     TypeParam,
     UnaryOp,
+    UnaryOpKind,
     WhileStatement,
 )
 
@@ -433,7 +435,7 @@ class TreeToAST(Transformer):
         # children: [left, op_token, right]
         return BinaryOp(
             span=_span_from_meta(meta),
-            op=str(children[1]),
+            op=BinaryOpKind.from_token(str(children[1])),
             left=children[0],
             right=children[2],
         )
@@ -442,7 +444,7 @@ class TreeToAST(Transformer):
         # children: [op_token, operand]
         return UnaryOp(
             span=_span_from_meta(meta),
-            op=str(children[0]),
+            op=UnaryOpKind.from_token(str(children[0])),
             operand=children[1],
         )
 

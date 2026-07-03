@@ -21,6 +21,9 @@ class PrimitiveTypeSymbol(Enum):
     Uint32 = auto()
     Uint64 = auto()
 
+    Float32 = auto()
+    Float64 = auto()
+
     Char8 = auto()
     Char32 = auto()
 
@@ -51,6 +54,10 @@ class PrimitiveTypeSymbol(Enum):
                 return PrimitiveTypeSymbol.Uint32
             case "Uint64":
                 return PrimitiveTypeSymbol.Uint64
+            case "Float32" | "Float":
+                return PrimitiveTypeSymbol.Float32
+            case "Float64":
+                return PrimitiveTypeSymbol.Float64
             case "Char8":
                 return PrimitiveTypeSymbol.Char8
             case "Char32":
@@ -125,7 +132,14 @@ class ClassSymbol:
     private_fields: Dict[str, TypeSymbol]
 
 
-Symbol = FunctionSymbol | FunctionGenericSymbol
+@dataclass
+class InterfaceSymbol:
+    parent_interfaces: List[str]
+
+    public_methods: Dict[str, MethodSymbol]
+
+
+Symbol = FunctionSymbol | FunctionGenericSymbol | ClassSymbol | InterfaceSymbol
 
 
 class NameError(TranslationError):
