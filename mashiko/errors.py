@@ -9,10 +9,12 @@ is deferred to inside the helpers that actually need to construct a
 
 from __future__ import annotations
 
+from .span import Span
+
 _SEPARATOR = "-" * 80
 
 
-def _span_from_lark_error(e: Exception) -> "Span":
+def _span_from_lark_error(e: Exception) -> Span:
     from .parser.syntax import Span  # deferred to break import cycle
 
     pos = getattr(e, "pos_in_stream", 0) or 0
@@ -24,9 +26,9 @@ def _span_from_lark_error(e: Exception) -> "Span":
 class TranslationError(Exception):
     """Common type for error cathed dyring translation process"""
 
-    span: "Span"
+    span: Span
 
-    def __init__(self, span: "Span") -> None:
+    def __init__(self, span: Span) -> None:
         self.span = span
 
     def into_str(self, src_code: str) -> str:
@@ -102,18 +104,3 @@ class ParseError(TranslationError):
 
     def additional_message(self) -> str:
         return str(self.lark_error).split("\n", 1)[0]
-
-
-class NameError(TranslationError):
-    """Raised when source code fails to semantic analyze.
-
-    Means, that a name used several times.
-    """
-
-    ident: str
-
-    def __init__(self, span: "Span", ident: str):
-        self.span = span
-
-    def additional_message(self) -> str:
-        return f"`{self.ident}` is already declared"

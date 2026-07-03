@@ -11,6 +11,8 @@ INTERFACE: "interface"
 TEMPLATE: "template"
 CONST: "const"
 TYPE: "type"
+PUBLIC: "public"
+STATIC: "static"
 
 IF: "if"
 ELSE: "else"
@@ -162,6 +164,15 @@ iteration_variable: IDENT | (LPAREN IDENT (COMMA IDENT)* RPAREN)
 
 // declarations
 
+// Optional `public` marker that can prefix any top-level or class-member
+// declaration. When the slot is absent on a rule, the transformer stores
+// `False` on the resulting AST node.
+visibility: PUBLIC
+
+// Optional `static` marker that can prefix a class or interface method.
+// Same slot semantics as `visibility`.
+static: STATIC
+
 typed_ident: IDENT COLON type
 ?arguments: LPAREN [typed_ident (COMMA typed_ident)*] RPAREN
 ?return_type: COLON type
@@ -172,23 +183,23 @@ template_const: CONST IDENT COLON type [EQ expression]
 ?template_member: template_param | template_const
 template_decl: TEMPLATE LANGLE [template_member (COMMA template_member)*] RANGLE
 
-function_decl: [template_decl] FUNC IDENT arguments [return_type] block
+function_decl: [visibility] [template_decl] FUNC IDENT arguments [return_type] block
 
-class_decl: [template_decl] CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
+class_decl: [visibility] [template_decl] CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
 
 class_body: (field | constructor | destructor | cloner | method)*
 
-field: typed_ident SEMICOLON
-constructor: CONSTRUCTOR arguments block
-destructor: DESTRUCTOR LPAREN RPAREN block
-cloner: CLONER LPAREN RPAREN block
-method: IDENT arguments [return_type] block
+field: [visibility] typed_ident SEMICOLON
+constructor: [visibility] CONSTRUCTOR arguments block
+destructor: [visibility] DESTRUCTOR LPAREN RPAREN block
+cloner: [visibility] CLONER LPAREN RPAREN block
+method: [visibility] [static] IDENT arguments [return_type] block
 
 interface_decl: [template_decl] INTERFACE IDENT [depent_interfaces] LBRACE interface_body RBRACE
 
 ?interface_body: interface_method*
 
-interface_method: IDENT arguments [return_type] (block | SEMICOLON)
+interface_method: [static] IDENT arguments [return_type] (block | SEMICOLON)
 
 module: (function_decl | class_decl | interface_decl)*
 

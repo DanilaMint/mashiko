@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .parser import parse_ast_file, parse_file
+from .parser import parse_ast, parse_ast_file
+from .print_ast import print_ast
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -17,9 +18,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("file", type=Path, help="path to a .msk source file")
     p.add_argument(
-        "--ast",
-        action="store_true",
-        help="print the raw Lark parse tree to stdout",
+        "--log",
+        choices=["quiet", "standart", "big"],
+        default="standart",
+        help="print translation status and metadata",
     )
     p.add_argument(
         "--ast-typed",
@@ -36,24 +38,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    src_code = ""
+
     try:
-        if args.ast_typed:
-            result, errors = parse_ast_file(args.file)
-        else:
-            result, errors = parse_file(args.file)
+        with open(args.file, "rt", encoding="utf-8") as file:
+            src_code = file.read()
     except FileNotFoundError as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(e)
         return 1
-    if errors:
-        for err in errors:
-            print(f"parse error: {err}", file=sys.stderr)
-        return 1
+
+    ast, errors = parse_ast(src_code)
+
     if args.ast_typed:
-        print(result)
-    elif args.ast:
-        print(result.pretty())
-    else:
-        print(f"OK: {args.file}", file=sys.stderr)
+        print_ast(ast)
+
+    if len(errors) > 0:
+        for err in errors:
+            print(err.into_str(src_code))
+
     return 0
 
 

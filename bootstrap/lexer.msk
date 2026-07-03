@@ -1,33 +1,37 @@
+import Span from "./span.msk";
 
-class TokenKind {
+class TokenKind: Equal {
     enum: UInt;
 
     constructor(n: UInt) { this.enum = n; }
+
+    eq(other: Self): Bool {
+        return this.enum = other.enum;
+    }
 }
 
 const FUNC_KW = TokenKind(1);
 const CLASS_KW = TokenKind(2);
+const CONSTRUCTOR_KW = TokenKind(3);
+const DESTRUCTOR_KW = TokenKind(4);
+const CLONER_KW = TokenKind(5);
+const INTERFACE_KW = TokenKind(6);
+const TEMPLATE_KW = TokenKind(7);
+const CONST_KW = TokenKind(8);
+const TYPE_KW = TokenKind(9);
+const PUBLIC_KW = TokenKind(10);
+const IF_KW = TokenKind(11);
+const ELSE_KW = TokenKind(12);
+const FOR_KW = TokenKind(13);
+const BREAK_KW = TokenKind(14);
+const CONTINUE_KW = TokenKind(15);
+const RETURN_KW = TokenKind(16);
+const TRUE_KW = TokenKind(17);
+const FALSE_KW = TokenKind(18);
+const IDENT = TokenKind(19);
+const INT = TokenKind(20);
 
 enum TokenKind {
-    EOF
-    FUNC_KW,
-    CLASS_KW,
-    CONSTRUCTOR_KW,
-    DESTRUCTOR_KW,
-    CLONER_KW,
-    INTERFACE_KW,
-    TEMPLATE_KW,
-    CONST_KW,
-    TYPE_KW,
-    IF_KW,
-    ELSE_KW,
-    FOR_KW,
-    BREAK_KW,
-    CONTINUE_KW,
-    RETURN_KW,
-    TRUE_KW,
-    FALSE_KW,
-
     IDENT,
     INT,
     FLOAT,
@@ -84,54 +88,4 @@ class Token {
 }
 
 class Lexer {
-    source: String32;
-    tokens: DynArray<Token>;
-    i: UInt;
-
-    constructor(source: String32) {
-        this.source = source;
-        this.tokens = DynArray.empty();
-    }
-
-    advance() {
-        this.i += 1;
-    }
-
-    peek(): Char32 {
-        return this.source[this.i];
-    }
-
-    next(): Char32 {
-        this.advance();
-        return this.peek();
-    }
 }
-
-func is_word_beginning(ch: Char32): UInt {
-    return ch.is_ascii() && (ch.is_letter() || ch == '_');
-}
-
-func is_word_member(ch: Char32): UInt {
-    return is_word_beginning(ch) || ch.is_digit();
-}
-
-func tokenize_word(src: String32, i: UInt): (TokenKind, UInt)? {
-    if !is_word_beginning(src[i]) return None;
-    len = 1;
-    for ch: src {
-        if !is_word_member(ch) break;
-        len += 1;
-    }
-    slice = src.slice(i, i + len);
-
-    if slice == "func" return (TokenKind.FUNC_KW, len);
-    if slice == "class" return (TokenKind.CLASS_KW, len);
-    if slice == "interface" return (TokenKind.INTERFACE_KW, len);
-    if slice == "constructor" return (TokenKind.CONSTRUCTOR_KW, len);
-
-    src = slice.take_string();
-
-    return len;
-}
-
-func tokenize_int(src: String32, i: UInt): (TokenKind, UInt)? {}

@@ -128,25 +128,41 @@ class TreeToAST(Transformer):
     def module(self, meta, children):
         return Module(span=_span_from_meta(meta), declarations=tuple(children))
 
+    def visibility(self, meta, children):
+        # `visibility` matches the literal `public` keyword and always
+        # represents True. Absence of the slot on the parent rule is
+        # represented by `None`, which the call sites translate to False.
+        return True
+
+    def static(self, meta, children):
+        # `static` matches the literal `static` keyword and always
+        # represents True. Absence of the slot on the parent rule is
+        # represented by `None`, which the call sites translate to False.
+        return True
+
     def function_decl(self, meta, children):
-        # children: [template_or_None, FUNC, IDENT, arguments_tree, return_type_or_None, block]
+        # children: [visibility_or_None, template_or_None, FUNC, IDENT,
+        #             arguments_tree, return_type_or_None, block]
         return FunctionDecl(
             span=_span_from_meta(meta),
-            template=children[0],
-            name=str(children[2]),
-            params=tuple(children[3]),
-            return_type=children[4],
-            body=children[5],
+            visibility=children[0] is not None,
+            template=children[1],
+            name=str(children[3]),
+            params=tuple(children[4]),
+            return_type=children[5],
+            body=children[6],
         )
 
     def class_decl(self, meta, children):
-        # children: [template_or_None, CLASS, IDENT, depent_interfaces_or_None, LBRACE, class_body, RBRACE]
+        # children: [visibility_or_None, template_or_None, CLASS, IDENT,
+        #             depent_interfaces_or_None, LBRACE, class_body, RBRACE]
         return ClassDecl(
             span=_span_from_meta(meta),
-            template=children[0],
-            name=str(children[2]),
-            interfaces=tuple(children[3]) if children[3] is not None else (),
-            body=children[5],
+            visibility=children[0] is not None,
+            template=children[1],
+            name=str(children[3]),
+            interfaces=tuple(children[4]) if children[4] is not None else (),
+            body=children[6],
         )
 
     def interface_decl(self, meta, children):
@@ -214,54 +230,69 @@ class TreeToAST(Transformer):
         return ClassBody(span=_span_from_meta(meta), members=tuple(children))
 
     def field(self, meta, children):
-        # children: [Param, SEMICOLON]
-        param = children[0]
+        # children: [visibility_or_None, Param, SEMICOLON]
+        param = children[1]
         return Field(
             span=_span_from_meta(meta),
+            visibility=children[0] is not None,
             name=param.name,
             type=param.type,
         )
 
     def constructor(self, meta, children):
-        # children: [CONSTRUCTOR, arguments_tree, block]
+        # children: [visibility_or_None, CONSTRUCTOR, arguments_tree, block]
         return Constructor(
             span=_span_from_meta(meta),
-            params=tuple(children[1]),
-            body=children[2],
+            visibility=children[0] is not None,
+            params=tuple(children[2]),
+            body=children[3],
         )
 
     def destructor(self, meta, children):
-        # children: [DESTRUCTOR, LPAREN, RPAREN, block]
-        return Destructor(span=_span_from_meta(meta), body=children[3])
+        # children: [visibility_or_None, DESTRUCTOR, LPAREN, RPAREN, block]
+        return Destructor(
+            span=_span_from_meta(meta),
+            visibility=children[0] is not None,
+            body=children[4],
+        )
 
     def cloner(self, meta, children):
-        # children: [CLONER, LPAREN, RPAREN, block]
-        return Cloner(span=_span_from_meta(meta), body=children[3])
+        # children: [visibility_or_None, CLONER, LPAREN, RPAREN, block]
+        return Cloner(
+            span=_span_from_meta(meta),
+            visibility=children[0] is not None,
+            body=children[4],
+        )
 
     def method(self, meta, children):
-        # children: [IDENT, arguments_tree, return_type_or_None, block]
+        # children: [visibility_or_None, static_or_None, IDENT, arguments_tree,
+        #             return_type_or_None, block]
         return Method(
             span=_span_from_meta(meta),
-            name=str(children[0]),
-            params=tuple(children[1]),
-            return_type=children[2],
-            body=children[3],
+            visibility=children[0] is not None,
+            static=children[1] is not None,
+            name=str(children[2]),
+            params=tuple(children[3]),
+            return_type=children[4],
+            body=children[5],
         )
 
     def interface_body(self, meta, children):
         return InterfaceBody(span=_span_from_meta(meta), methods=tuple(children))
 
     def interface_method(self, meta, children):
-        # children: [IDENT, arguments_tree, return_type_or_None, block | SEMICOLON_token]
-        if _is_token(children[3]):
+        # children: [static_or_None, IDENT, arguments_tree, return_type_or_None,
+        #             block | SEMICOLON_token]
+        if _is_token(children[4]):
             body = None
         else:
-            body = children[3]
+            body = children[4]
         return InterfaceMethod(
             span=_span_from_meta(meta),
-            name=str(children[0]),
-            params=tuple(children[1]),
-            return_type=children[2],
+            static=children[0] is not None,
+            name=str(children[1]),
+            params=tuple(children[2]),
+            return_type=children[3],
             body=body,
         )
 

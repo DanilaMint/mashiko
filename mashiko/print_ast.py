@@ -39,8 +39,7 @@ from typing import IO, Any, Iterable, Optional
 
 from .errors import ParseError
 from .parser import parse_ast_file
-from .syntax import Module, Node
-
+from .parser.syntax import Module, Node
 
 # ---- ANSI palette ------------------------------------------------------------
 
@@ -140,7 +139,7 @@ def _paint_node_header(node: Any, color: bool) -> str:
     head = _paint(_Style.BOLD + _Style.CYAN, cls, color)
     if summary == cls:
         return head
-    tail = summary[len(cls):]
+    tail = summary[len(cls) :]
     return f"{head}{tail}"
 
 

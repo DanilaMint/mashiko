@@ -18,24 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from ..span import Span
+
 # ---- Common -----------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Span:
-    """Source range covered by an AST node.
-
-    ``start_pos``/``end_pos`` are zero-based character offsets in the
-    original source string (``end_pos`` is exclusive). ``start_line`` /
-    ``start_column`` / ``end_line`` / ``end_column`` are 1-based.
-    """
-
-    start_pos: int
-    end_pos: int
-    start_line: int
-    start_column: int
-    end_line: int
-    end_column: int
 
 
 @dataclass(frozen=True)
@@ -59,6 +44,7 @@ class Module(Node):
 
 @dataclass(frozen=True)
 class FunctionDecl(Node):
+    visibility: bool
     template: Optional[TemplateDecl]
     name: str
     params: tuple[Param, ...]
@@ -68,6 +54,7 @@ class FunctionDecl(Node):
 
 @dataclass(frozen=True)
 class ClassDecl(Node):
+    visibility: bool
     template: Optional[TemplateDecl]
     name: str
     interfaces: tuple[InterfaceRef, ...]
@@ -103,8 +90,6 @@ class TemplateDecl(Node):
 TemplateMember = Union[TypeParam, ConstParam]
 
 
-
-
 Declaration = Union[FunctionDecl, ClassDecl, InterfaceDecl]
 
 
@@ -118,28 +103,34 @@ class ClassBody(Node):
 
 @dataclass(frozen=True)
 class Field(Node):
+    visibility: bool
     name: str
     type: Type
 
 
 @dataclass(frozen=True)
 class Constructor(Node):
+    visibility: bool
     params: tuple[Param, ...]
     body: Block
 
 
 @dataclass(frozen=True)
 class Destructor(Node):
+    visibility: bool
     body: Block
 
 
 @dataclass(frozen=True)
 class Cloner(Node):
+    visibility: bool
     body: Block
 
 
 @dataclass(frozen=True)
 class Method(Node):
+    visibility: bool
+    static: bool
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]
@@ -159,6 +150,7 @@ class InterfaceBody(Node):
 
 @dataclass(frozen=True)
 class InterfaceMethod(Node):
+    static: bool
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]

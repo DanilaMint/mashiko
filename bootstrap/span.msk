@@ -1,0 +1,16 @@
+
+public class Span: Ord {
+    idx: UInt;
+    line: UInt;
+    column: UInt;
+
+    constructor(idx: UInt, line: UInt, column: UInt) {
+        this.idx = idx;
+        this.line = line;
+        this.column = column;
+    }
+
+    lt(other: Self): Bool {
+        return this.idx < other.idx;
+    }
+}
