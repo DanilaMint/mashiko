@@ -81,6 +81,64 @@ class APITests(unittest.TestCase):
         self.assertIn("ParseError", type(errors[0]).__name__)
 
 
+class RecoveryTests(unittest.TestCase):
+    """The parser collects multiple syntax errors in a single pass
+    instead of bailing on the first one. Earley with
+    ``ambiguity='explicit'`` has no built-in recovery, so the parser
+    recovers by masking each offending region with a block comment and
+    re-parsing. Each subsequent error's position is translated back
+    to the original source.
+    """
+
+    def test_two_independent_errors_both_reported(self):
+        src = (
+            "func a() {\n"
+            "    @@@ bad token;\n"
+            "}\n"
+            "func b() {\n"
+            "    ### also bad;\n"
+            "}\n"
+        )
+        _, errors = parse_string(src)
+
+        # Both errors must be in the list (Earley without recovery
+        # would only surface the first).
+        self.assertGreaterEqual(
+            len(errors), 2,
+            f"expected >= 2 parse errors, got {len(errors)}",
+        )
+
+    def test_first_error_keeps_larks_diagnostic(self):
+        # The first reported error should preserve Lark's detailed
+        # message ("No terminal matches '@'..."); only the
+        # translated-pos recovery errors get the generic
+        # "recovered region" placeholder.
+        _, errors = parse_string("@@@")
+        self.assertEqual(len(errors), 1)
+        msg = errors[0].additional_message()
+        self.assertIn("@", msg)
+        self.assertNotIn("recovered region", msg)
+
+    def test_recovered_error_points_into_original_source(self):
+        src = (
+            "func a() {\n"           # line 1
+            "    @@@ bad;\n"         # line 2, col 5
+            "}\n"
+            "func b() {\n"           # line 4
+            "    ### also bad;\n"    # line 5, col 5
+            "}\n"
+        )
+        _, errors = parse_string(src)
+        # Find the error on line 5.
+        line5 = [e for e in errors if e.span.start_line == 5]
+        self.assertTrue(
+            line5,
+            f"no error on line 5; got "
+            f"{[(e.span.start_line, e.span.start_column) for e in errors]}",
+        )
+        self.assertEqual(line5[0].span.start_column, 5)
+
+
 class CommentTests(unittest.TestCase):
     """Line (//) and block (/* */) comments are skipped during lexing."""
 

@@ -3,12 +3,12 @@
 Each public function returns ``(result, errors)`` rather than raising:
 
 * on success — ``(tree_or_module, [])``
-* on failure — ``(None, [ParseError(...)])``
+* on failure — ``(None, [ParseError(...), ...])``
 
-Callers iterate ``errors`` (it is a list for forward compatibility, even
-though the Earley parser produces at most one error per attempt) and
-inspect ``result`` only when ``errors`` is empty. ``FileNotFoundError``
-is still raised from the ``parse_file*`` variants because it is an I/O
+Callers iterate ``errors`` (it is a list, so multiple errors from the
+recovery loop can all be surfaced in a single pass) and inspect
+``result`` only when ``errors`` is empty. ``FileNotFoundError`` is
+still raised from the ``parse_file*`` variants because it is an I/O
 issue, not a parsing issue.
 """
 
@@ -22,6 +22,7 @@ from lark import Lark
 from lark.exceptions import LarkError
 
 from ..errors import ParseError
+from ..span import Span
 from .transformer import TreeToAST
 
 __all__ = ["parse_file", "parse_string", "parse_ast", "parse_ast_file"]
@@ -52,6 +53,15 @@ _GRAMMAR_PREFIX = (
     "\n"
 )
 
+# Parsing-error recovery bounds. Lark's Earley parser with
+# ``ambiguity='explicit'`` has no built-in recovery — a ``LarkError``
+# raises on the first unexpected input. ``parse_string`` masks each
+# offending region with a block comment and re-parses to surface
+# subsequent errors in a single sweep.
+_RECOVERY_MAX_PASSES = 16
+_RECOVERY_MASK = "/*!s*/"
+_RECOVERY_RESCAN_WINDOW = 8192
+
 
 def _load_grammar() -> str:
     return _GRAMMAR_PREFIX + (
@@ -68,27 +78,109 @@ def _get_parser() -> Lark:
             _load_grammar(),
             parser="earley",
             ambiguity="explicit",
-            # Populate Tree.meta with start_pos/end_pos/line/column/... so
-            # the transformer can attach a Span to every AST node.
+            # Populate Tree.meta with start_pos/end_pos/line/column/...
+            # so the transformer can attach a Span to every AST node.
             propagate_positions=True,
         )
     return _PARSER
 
 
+def _pos_to_line_col(source: str, pos: int) -> tuple[int, int]:
+    """Translate a 0-based character offset in ``source`` to a
+    1-based ``(line, column)`` pair.
+    """
+    line = column = 1
+    for ch in source[: min(pos, len(source))]:
+        if ch == "\n":
+            line += 1
+            column = 1
+        else:
+            column += 1
+    return line, column
+
+
+def _next_resync_point(source: str, after_pos: int) -> int | None:
+    """Find the position after ``after_pos`` where the parser can
+    plausibly resume after a recovery mask.
+
+    Two statement/block terminators mark safe resync points:
+    ``;`` (statement end) and ``}`` (block end). Newlines are skipped
+    intentionally — masking them would shift later line numbers, which
+    is more confusing than a slightly longer masked region.
+
+    Returns ``None`` if no such boundary is found within
+    ``_RECOVERY_RESCAN_WINDOW`` characters, indicating the parser has
+    hit unbalanced-brace territory where further recovery would only
+    produce noise.
+    """
+    end = min(len(source), after_pos + _RECOVERY_RESCAN_WINDOW)
+    for i in range(after_pos, end):
+        if source[i] in (";", "}"):
+            return i + 1
+    return None
+
+
 def parse_string(source: str) -> ParserResult:
     """Parse a mashiko source string.
 
-    Returns ``(tree, errors)``. On success ``errors`` is empty; on a
-    syntax error ``tree`` is ``None`` and ``errors`` contains a single
-    :class:`~mashiko.errors.ParseError`.
+    Returns ``(tree, errors)``. On full success ``errors`` is empty
+    and ``tree`` is the parsed Lark tree. If the source has syntax
+    errors the parser performs up to :data:`_RECOVERY_MAX_PASSES`
+    recovery passes: each pass masks the offending region with a
+    block comment (which the lexer treats as whitespace) and
+    re-parses, accumulating one :class:`~mashiko.errors.ParseError`
+    per failure. The returned ``tree`` (if any) is best-effort and
+    may not represent the source faithfully — callers that need a
+    coherent AST should ensure ``errors`` is empty before using it.
+
+    Position accuracy note: positions on errors from the second and
+    later passes are translated back from the masked source into the
+    *original* source by subtracting the cumulative size of all
+    masks inserted so far. Line and column numbers are recomputed
+    against the un-masked source.
     """
     errors: list[ParseError] = []
-    try:
-        tree: Tree | None = _get_parser().parse(source, start="start")
-    except LarkError as e:
-        errors.append(ParseError(e))
-        return None, errors
-    return tree, errors
+    masked = source
+    mask_extra = 0  # bytes the masked source has grown past the original
+    mask_len = len(_RECOVERY_MASK)
+
+    for _ in range(_RECOVERY_MAX_PASSES):
+        try:
+            tree = _get_parser().parse(masked, start="start")
+            return tree, errors
+        except LarkError as exc:
+            masked_pos = getattr(exc, "pos_in_stream", None)
+            if masked_pos is None:
+                errors.append(ParseError(exc))
+                return None, errors
+
+            if mask_extra == 0:
+                # First pass — no recovery has been applied yet, so the
+                # LarkError's pos/line/column already point into the
+                # original source. Wrap it directly to keep Lark's
+                # detailed diagnostic message ("No terminal matches '@'
+                # ...") instead of replacing it with a generic
+                # "recovered region" placeholder.
+                errors.append(ParseError(exc))
+            else:
+                # Recovery pass — the LarkError's positions live in the
+                # masked source. Translate them back so the diagnostic
+                # points at the corresponding position in the original.
+                original_pos = max(0, masked_pos - mask_extra)
+                line, column = _pos_to_line_col(source, original_pos)
+                span = Span(
+                    original_pos, original_pos, line, column, line, column
+                )
+                errors.append(ParseError(span))
+
+            next_pos = _next_resync_point(masked, masked_pos)
+            if next_pos is None:
+                return None, errors
+
+            masked = masked[:masked_pos] + _RECOVERY_MASK + masked[next_pos:]
+            mask_extra += mask_len - (next_pos - masked_pos)
+
+    return None, errors
 
 
 def parse_file(path: str | Path) -> ParserResult:
@@ -114,11 +206,8 @@ def parse_ast(source: str) -> ASTResult:
         return None, errors
     try:
         module: Module | None = TreeToAST().transform(tree)
-    except Exception as e:
-        # The transformer should normally succeed on a valid Lark tree;
-        # wrap any unexpected failure as a ParseError so the caller's
-        # uniform error-handling path still applies.
-        errors.append(ParseError(e))
+    except Exception as exc:
+        errors.append(ParseError(exc))
         return None, errors
     return module, errors
 

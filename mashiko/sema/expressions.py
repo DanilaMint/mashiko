@@ -1,0 +1,911 @@
+"""Statement and expression type checking.
+
+Two entry points:
+
+* :func:`check_block` — type-check a sequence of statements in a fresh
+  lexical scope. Recursively descends into nested blocks, ``if``,
+  ``while``, ``for`` and ``return`` statements.
+* :func:`get_expression_type` — return the :class:`TypeSymbol` of a
+  single expression, or ``None`` if it could not be determined. When
+  the result is ``None`` the function has already pushed a
+  :class:`TypeError` or :class:`NameError` onto ``analyzer.errors``
+  describing why, so callers do not need to re-report.
+
+The analyzer carries small mutable fields (:attr:`loop_depth`,
+:attr:`current_return_type`) that the surrounding
+:class:`~mashiko.sema.core.SemaAnalyzer` orchestrator is responsible
+for pushing and popping around function/method bodies. The helpers
+here only read them.
+"""
+
+from typing import Dict, Optional
+
+from .errors import NameError, TypeError
+from .coercions import common_numeric_type, types_compatible
+from .op_method import binary_op_method, unary_op_method
+from ..parser.syntax import (
+    ArrayLiteral,
+    AssignStatement,
+    AssignTarget,
+    BinaryOp,
+    Block,
+    BoolLiteral,
+    BreakStatement,
+    CharLiteral,
+    Conditional,
+    ConstParam,
+    ContinueStatement,
+    Expression,
+    ExpressionStatement as ExpressionStatementType,
+    FloatLiteral,
+    ForStatement,
+    FunctionCall,
+    IfStatement,
+    Indexing,
+    IntLiteral,
+    IterationVariable,
+    MaybeUnwrap,
+    MemberAccess,
+    MethodCall,
+    Name,
+    ParenExpr,
+    ReturnStatement,
+    Statement,
+    StringLiteral,
+    UnaryOp,
+    WhileStatement,
+)
+from .scope import Scope
+from .symbols import (
+    ClassSymbol,
+    ClassTemplate,
+    FunctionSymbol,
+    FunctionTemplate,
+    GenericDefinedTypeSymbol,
+    InterfaceTemplate,
+    MaybeTypeSymbol,
+    MethodSymbol,
+    PrimitiveTypeSymbol,
+    TypeParamSymbol,
+    TypeSymbol,
+    UserDefinedTypeSymbol,
+    VarSymbol,
+    substitute_type,
+)
+from .templates import infer_template_args, substitute_type, type_param_mapping
+
+
+# ---------------------------------------------------------------------------
+# Block / statement checking
+# ---------------------------------------------------------------------------
+
+
+def check_block(analyzer, ast: Block):
+    """Open a new lexical scope around ``ast`` and type-check each statement."""
+    parent = analyzer.current_scope
+    analyzer.current_scope = Scope(parent)
+    try:
+        for stmt in ast.statements:
+            check_statement(analyzer, stmt)
+    finally:
+        analyzer.current_scope = parent
+
+
+def check_statement(analyzer, stmt: Statement):
+    if isinstance(stmt, AssignStatement):
+        _check_assign(analyzer, stmt.target, stmt.op, stmt.value)
+        return
+
+    if isinstance(stmt, ExpressionStatementType):
+        get_expression_type(analyzer, stmt.expression)
+        return
+
+    if isinstance(stmt, IfStatement):
+        cond_type = get_expression_type(analyzer, stmt.condition)
+        if cond_type != PrimitiveTypeSymbol.Bool:
+            analyzer.errors.append(
+                TypeError(stmt.condition.span, PrimitiveTypeSymbol.Bool, cond_type,
+                          "if-condition must be Bool")
+            )
+        check_statement(analyzer, stmt.then_branch)
+        if stmt.else_branch is not None:
+            check_statement(analyzer, stmt.else_branch)
+        return
+
+    if isinstance(stmt, WhileStatement):
+        cond_type = get_expression_type(analyzer, stmt.condition)
+        if cond_type != PrimitiveTypeSymbol.Bool:
+            analyzer.errors.append(
+                TypeError(stmt.condition.span, PrimitiveTypeSymbol.Bool, cond_type,
+                          "while-condition must be Bool")
+            )
+        analyzer.loop_depth += 1
+        try:
+            check_statement(analyzer, stmt.body)
+        finally:
+            analyzer.loop_depth -= 1
+        return
+
+    if isinstance(stmt, ForStatement):
+        iter_type = get_expression_type(analyzer, stmt.iterable)
+        if iter_type is None:
+            analyzer.loop_depth += 1
+            try:
+                check_statement(analyzer, stmt.body)
+            finally:
+                analyzer.loop_depth -= 1
+            return
+
+        analyzer.loop_depth += 1
+        parent = analyzer.current_scope
+        analyzer.current_scope = Scope(parent)
+        try:
+            _bind_for_variable(analyzer, stmt.variable, iter_type)
+            check_statement(analyzer, stmt.body)
+        finally:
+            analyzer.current_scope = parent
+            analyzer.loop_depth -= 1
+        return
+
+    if isinstance(stmt, BreakStatement):
+        if analyzer.loop_depth == 0:
+            analyzer.errors.append(
+                TypeError(stmt.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                          "`break` outside a loop")
+            )
+        return
+
+    if isinstance(stmt, ContinueStatement):
+        if analyzer.loop_depth == 0:
+            analyzer.errors.append(
+                TypeError(stmt.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                          "`continue` outside a loop")
+            )
+        return
+
+    if isinstance(stmt, ReturnStatement):
+        expected = analyzer.current_return_type
+        if stmt.value is None:
+            if expected != PrimitiveTypeSymbol.Void:
+                analyzer.errors.append(
+                    TypeError(stmt.span, expected, PrimitiveTypeSymbol.Void,
+                              "return without value from non-Void function")
+                )
+            return
+        got = get_expression_type(analyzer, stmt.value)
+        if expected is not None and got is not None and not types_compatible(got, expected):
+            analyzer.errors.append(
+                TypeError(stmt.value.span, expected, got, "return type mismatch")
+            )
+        return
+
+    if isinstance(stmt, Block):
+        check_block(analyzer, stmt)
+        return
+
+
+def _bind_for_variable(
+    analyzer, var: IterationVariable, iter_type: TypeSymbol
+) -> None:
+    """Bind the iteration variable(s) of a ``for`` to the element type of ``iter``.
+
+    A :class:`~mashiko.parser.syntax.ForStatement` over an
+    ``Array<T>`` binds a single ``Name`` to ``T``. Without a richer
+    "iterator" interface the iterable must already be a container with
+    a known element type — for non-container iterables we silently
+    skip the binding and let later checks (a use of the variable)
+    surface an error.
+    """
+    elem_type = _element_type_of(iter_type, analyzer)
+    if elem_type is None:
+        return
+    match var:
+        case Name(name=n):
+            analyzer.current_scope.push_symbol(n, VarSymbol(type=elem_type))
+        case _:
+            # Tuple destructuring: not yet implemented.
+            pass
+
+
+def _element_type_of(t: TypeSymbol, analyzer) -> Optional[TypeSymbol]:
+    """Return the element type of ``t`` if it looks like an ``Array<T>``."""
+    if not isinstance(t, GenericDefinedTypeSymbol):
+        return None
+    if t.name != "Array":
+        return None
+    if not t.type_args:
+        return None
+    return t.type_args[0]
+
+
+def _check_assign(
+    analyzer, target: AssignTarget, op: str, value: Expression
+) -> None:
+    """Type-check an assignment of ``value`` to ``target`` under ``op``.
+
+    Plain ``=`` is treated as a declaration when ``target`` introduces a
+    new name in the current scope. Compound assignment (``+=`` etc.)
+    is rewritten as ``target = target <op> value`` and validates the
+    left-hand side against its previously-declared type.
+    """
+    target_type, name_node = _assign_target_type(analyzer, target)
+
+    if op == "=":
+        value_type = get_expression_type(analyzer, value)
+        if value_type is None:
+            return
+        if target_type is None and isinstance(target, Name):
+            analyzer.current_scope.push_symbol(target.name, VarSymbol(type=value_type))
+            return
+        if not types_compatible(value_type, target_type):
+            analyzer.errors.append(
+                TypeError(value.span, target_type or value_type, value_type,
+                          "assignment type mismatch")
+            )
+        return
+
+    # Compound assignment. target must already be declared.
+    if target_type is None:
+        analyzer.errors.append(
+            TypeError(target.span, PrimitiveTypeSymbol.Int, PrimitiveTypeSymbol.Void,
+                      f"`{op}` requires an existing binding")
+        )
+        return
+
+    binop_kind = _compound_op_kind(op)
+    if binop_kind is None:
+        analyzer.errors.append(
+            TypeError(target.span, target_type, target_type,
+                      f"unknown compound assignment operator {op!r}")
+        )
+        return
+
+    value_type = get_expression_type(analyzer, value)
+    if value_type is None:
+        return
+
+    # Try primitive built-ins first — `Int += Int` works because
+    # `_primitive_binary_result` accepts same-shape numeric operands,
+    # even though `Int` itself carries no public methods. This is
+    # what `examples/find_super_prime.msk` relies on for `acc += 1`.
+    prim = _primitive_binary_result(binop_kind, target_type, value_type)
+    if prim is _PRIM_OK:
+        return  # valid; same-type arithmetic / Bool comparison
+    if prim is _PRIM_MISMATCH:
+        analyzer.errors.append(
+            TypeError(value.span, target_type, value_type,
+                      f"`{binop_kind.value}` requires compatible right-hand side")
+        )
+        return
+    if prim is not None:
+        return  # some concrete primitive result type — also fine
+
+    methods = get_type_public_methods(analyzer, target_type)
+    if methods is None:
+        analyzer.errors.append(
+            TypeError(value.span, target_type, target_type,
+                      f"`{binop_kind.value}` not defined for {target_type}")
+        )
+        return
+    method = methods.get(binary_op_method(binop_kind))
+    if method is None:
+        analyzer.errors.append(
+            TypeError(value.span, target_type, target_type,
+                      f"`{binop_kind.value}` not defined for {target_type}")
+        )
+        return
+    if not method.params or method.params[0] != value_type:
+        analyzer.errors.append(
+            TypeError(value.span, method.params[0], value_type,
+                      f"`{binop_kind.value}` argument type mismatch")
+        )
+
+
+def _compound_op_kind(op: str):
+    """Map a compound assignment operator (e.g. ``+=``) to its
+    :class:`BinaryOpKind`. Returns ``None`` for unknown operators.
+    """
+    from ..parser.syntax import BinaryOpKind
+
+    return {
+        "+=": BinaryOpKind.ADD,
+        "-=": BinaryOpKind.SUBTRACT,
+        "*=": BinaryOpKind.MULTIPLY,
+        "/=": BinaryOpKind.DIVIDE,
+        "%=": BinaryOpKind.MODULO,
+    }.get(op)
+
+
+def _assign_target_type(
+    analyzer, target: AssignTarget
+) -> tuple[Optional[TypeSymbol], Optional[Name]]:
+    """Return the declared :class:`TypeSymbol` of an assignment target.
+
+    For a plain :class:`Name` the symbol table is consulted. For an
+    indexed/tuple/member access we return ``(None, None)`` — those
+    l-values can only appear in plain assignment, never as a
+    declaration site.
+    """
+    if isinstance(target, Name):
+        sym = analyzer.current_scope.get_symbol(target.name)
+        if sym is None:
+            return None, target
+        if isinstance(sym, VarSymbol):
+            return sym.type, target
+        if isinstance(sym, FunctionSymbol):
+            # functions are not assignable
+            return sym.return_type, target  # best-effort, may produce a confusing error
+        return None, target
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Expression typing
+# ---------------------------------------------------------------------------
+
+
+def get_expression_type(analyzer, expr: Expression) -> Optional[TypeSymbol]:
+    match expr:
+        case IntLiteral():
+            return PrimitiveTypeSymbol.Int
+
+        case FloatLiteral():
+            return PrimitiveTypeSymbol.Float64
+
+        case StringLiteral():
+            return UserDefinedTypeSymbol("String")
+
+        case CharLiteral():
+            return PrimitiveTypeSymbol.Char32
+
+        case BoolLiteral():
+            return PrimitiveTypeSymbol.Bool
+
+        case ParenExpr():
+            return get_expression_type(analyzer, expr.expr)
+
+        case Name():
+            return _resolve_name(analyzer, expr)
+
+        case FunctionCall():
+            return _type_check_call(analyzer, expr)
+
+        case MethodCall():
+            return _type_check_method_call(analyzer, expr)
+
+        case Indexing():
+            return _type_check_indexing(analyzer, expr)
+
+        case MaybeUnwrap(expr=inner):
+            inner_type = get_expression_type(analyzer, inner)
+            if isinstance(inner_type, MaybeTypeSymbol):
+                return inner_type.content
+            return inner_type
+
+        case MemberAccess():
+            return _type_check_member_access(analyzer, expr)
+
+        case BinaryOp():
+            return _type_check_binary(analyzer, expr)
+
+        case UnaryOp():
+            return _type_check_unary(analyzer, expr)
+
+        case Conditional():
+            return _type_check_conditional(analyzer, expr)
+
+        case ArrayLiteral():
+            return _type_check_array_literal(analyzer, expr)
+
+        case _:
+            return None
+
+
+def _resolve_name(analyzer, expr: Name) -> Optional[TypeSymbol]:
+    sym = analyzer.current_scope.get_symbol(expr.name)
+    if sym is None:
+        analyzer.errors.append(NameError(expr.span, expr.name))
+        return None
+    if isinstance(sym, FunctionSymbol):
+        return sym.return_type
+    if isinstance(sym, VarSymbol):
+        return sym.type
+    if isinstance(sym, FunctionTemplate):
+        # A generic function reference without explicit type arguments has
+        # no fixed return type at this AST position. Defer until call sites
+        # provide context.
+        analyzer.errors.append(
+            TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"generic function `{expr.name}` needs explicit type arguments")
+        )
+        return None
+    if isinstance(sym, (ClassSymbol, ClassTemplate, InterfaceSymbol, InterfaceTemplate)):
+        # Types used in value position (e.g. ``DynArray()`` as a
+        # constructor-style call). The actual receiver check happens in
+        # FunctionCall's symbol lookup, so just return None here.
+        return None
+    return None
+
+
+def _type_check_call(analyzer, expr: FunctionCall) -> Optional[TypeSymbol]:
+    sym = analyzer.current_scope.get_symbol(expr.name)
+    if sym is None:
+        analyzer.errors.append(NameError(expr.span, expr.name))
+        return None
+
+    if isinstance(sym, FunctionSymbol):
+        _check_arity(analyzer, expr.span, len(sym.params), len(expr.args), expr.name)
+        for arg, param_type in zip(expr.args, sym.params):
+            at = get_expression_type(analyzer, arg)
+            if at is None:
+                continue
+            if not types_compatible(at, param_type):
+                analyzer.errors.append(
+                    TypeError(arg.span, param_type, at,
+                              f"argument of `{expr.name}` has wrong type")
+                )
+        return sym.return_type
+
+    if isinstance(sym, FunctionTemplate):
+        # Try to infer template type-params from the arg types. Const
+        # params stay un-inferred; if any are required (no default)
+        # the call falls through to the explicit-args error.
+        arg_types: list[Optional[TypeSymbol]] = [
+            get_expression_type(analyzer, a) for a in expr.args
+        ]
+        mapping = infer_template_args(
+            sym.template_params, tuple(sym.params), tuple(arg_types)
+        )
+        if mapping is None:
+            analyzer.errors.append(
+                TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                          f"cannot infer template args for `{expr.name}` from call")
+            )
+            return None
+        # A type-position template param that never appears in any
+        # parameter cannot be inferred — refuse to guess.
+        type_param_names = {
+            tp.name for tp in sym.template_params
+            if isinstance(tp, TypeParamSymbol)
+        }
+        if not type_param_names.issubset(mapping.keys()):
+            analyzer.errors.append(
+                TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                          f"generic call `{expr.name}` needs explicit type arguments")
+            )
+            return None
+        # Bounds check: every inferred type-arg must satisfy its
+        # declared interface constraints.
+        from .type_lowering import type_satisfies_interfaces
+
+        for tp in sym.template_params:
+            if not isinstance(tp, TypeParamSymbol) or not tp.interfaces:
+                continue
+            inferred = mapping[tp.name]
+            if not type_satisfies_interfaces(inferred, tp.interfaces, analyzer.current_scope):
+                analyzer.errors.append(
+                    TypeError(expr.span, tp, inferred,
+                              f"type argument for `{expr.name}` does not satisfy bound "
+                              f"{list(tp.interfaces)}")
+                )
+                return None
+        _check_arity(analyzer, expr.span, len(sym.params), len(expr.args), expr.name)
+        substituted_params = [substitute_type(p, mapping) for p in sym.params]
+        for arg, param_type in zip(expr.args, substituted_params):
+            at = get_expression_type(analyzer, arg)
+            if at is None:
+                continue
+            if not types_compatible(at, param_type):
+                analyzer.errors.append(
+                    TypeError(arg.span, param_type, at,
+                              f"argument of `{expr.name}` has wrong type")
+                )
+        return substitute_type(sym.return_type, mapping)
+
+    if isinstance(sym, (ClassSymbol, ClassTemplate)):
+        # Treated as a 0-ary constructor; arity check below.
+        if expr.args:
+            analyzer.errors.append(
+                TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                          f"`{expr.name}` is a type, not a callable")
+            )
+            return None
+        return _materialize_from_class(sym)
+
+    analyzer.errors.append(
+        TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                  f"`{expr.name}` is not callable")
+    )
+    return None
+
+
+def _materialize_from_class(sym) -> TypeSymbol:
+    """Return the value-level type produced by ``sym`` used as a constructor."""
+    if isinstance(sym, ClassSymbol):
+        return UserDefinedTypeSymbol(sym.__class__.__name__)  # placeholder
+    if isinstance(sym, ClassTemplate):
+        # No instantiation site => return a generic with no args. The
+        # caller's expected type is rarely this, so we surface a soft
+        # signal by leaving the type opaque.
+        return GenericDefinedTypeSymbol(name="?", type_args=())
+    return PrimitiveTypeSymbol.Void
+
+
+def _check_arity(analyzer, span, expected: int, got: int, name: str) -> None:
+    if expected != got:
+        analyzer.errors.append(
+            TypeError(span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"`{name}` expects {expected} args, got {got}")
+        )
+
+
+def _type_check_method_call(
+    analyzer, expr: MethodCall
+) -> Optional[TypeSymbol]:
+    obj_type = get_expression_type(analyzer, expr.obj)
+    if obj_type is None:
+        return None
+    methods = get_type_public_methods(analyzer, obj_type)
+    if methods is None:
+        analyzer.errors.append(
+            TypeError(expr.obj.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"no public methods on {obj_type}")
+        )
+        return None
+    method = methods.get(expr.name)
+    if method is None:
+        analyzer.errors.append(
+            TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"`{expr.name}` is not a method of {obj_type}")
+        )
+        return None
+    _check_arity(analyzer, expr.span, len(method.params), len(expr.args), expr.name)
+    for arg, param_type in zip(expr.args, method.params):
+        at = get_expression_type(analyzer, arg)
+        if at is None:
+            continue
+        if not types_compatible(at, param_type):
+            analyzer.errors.append(
+                TypeError(arg.span, param_type, at,
+                          f"argument of `{expr.name}` has wrong type")
+            )
+    return method.return_type
+
+
+def _type_check_indexing(analyzer, expr: Indexing) -> Optional[TypeSymbol]:
+    obj_type = get_expression_type(analyzer, expr.obj)
+    if obj_type is None:
+        return None
+    methods = get_type_public_methods(analyzer, obj_type)
+    if methods is None:
+        return None
+    at = methods.get("at")
+    if at is not None:
+        idx_type = get_expression_type(analyzer, expr.index)
+        if (
+            idx_type is not None
+            and at.params
+            and not types_compatible(idx_type, at.params[0])
+        ):
+            analyzer.errors.append(
+                TypeError(expr.index.span, at.params[0], idx_type,
+                          "index type mismatch")
+            )
+        return at.return_type
+
+    get_ = methods.get("get")
+    if get_ is not None:
+        idx_type = get_expression_type(analyzer, expr.index)
+        if (
+            idx_type is not None
+            and get_.params
+            and not types_compatible(idx_type, get_.params[0])
+        ):
+            analyzer.errors.append(
+                TypeError(expr.index.span, get_.params[0], idx_type,
+                          "index type mismatch")
+            )
+        return get_.return_type
+
+    return None
+
+
+def _type_check_member_access(
+    analyzer, expr: MemberAccess
+) -> Optional[TypeSymbol]:
+    obj_type = get_expression_type(analyzer, expr.obj)
+    if obj_type is None:
+        return None
+    fields = get_type_public_fields(analyzer, obj_type)
+    if fields is None:
+        analyzer.errors.append(
+            TypeError(expr.obj.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"no public fields on {obj_type}")
+        )
+        return None
+    field_type = fields.get(expr.name)
+    if field_type is None:
+        analyzer.errors.append(
+            TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"`{expr.name}` is not a public field of {obj_type}")
+        )
+        return None
+    return field_type
+
+
+def _type_check_binary(analyzer, expr: BinaryOp) -> Optional[TypeSymbol]:
+    left_type = get_expression_type(analyzer, expr.left)
+    right_type = get_expression_type(analyzer, expr.right)
+    if left_type is None or right_type is None:
+        return None
+
+    # Built-in operators on primitive types are not modelled via the
+    # public-methods table (that table only carries user-defined
+    # methods). The semantics used here match what
+    # ``find_super_prime.msk`` and other examples rely on:
+    #   arithmetic/relational on same-kind numeric → numeric / Bool,
+    #   logical ops on Bool → Bool,
+    #   bitwise ops on same integer kind → that integer.
+    prim = _primitive_binary_result(expr.op, left_type, right_type)
+    if prim is _PRIM_OK:
+        return left_type if not _is_comparison(expr.op) else PrimitiveTypeSymbol.Bool
+    if prim is _PRIM_MISMATCH:
+        analyzer.errors.append(
+            TypeError(expr.span, left_type, right_type,
+                      f"operator {expr.op.value}: operands must be compatible")
+        )
+        return None
+    if prim is not None:
+        return prim
+
+    methods = get_type_public_methods(analyzer, left_type)
+    if methods is None:
+        analyzer.errors.append(
+            TypeError(expr.left.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"no public methods on {left_type}")
+        )
+        return None
+    method_name = binary_op_method(expr.op)
+    method = methods.get(method_name)
+    if method is None:
+        analyzer.errors.append(
+            TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
+                      f"operator {expr.op.value} not defined for {left_type}")
+        )
+        return None
+    if method.params and method.params[0] != right_type:
+        analyzer.errors.append(
+            TypeError(expr.right.span, method.params[0], right_type,
+                      f"operator {expr.op.value} argument type mismatch")
+        )
+    return method.return_type
+
+
+def _type_check_unary(analyzer, expr: UnaryOp) -> Optional[TypeSymbol]:
+    operand_type = get_expression_type(analyzer, expr.operand)
+    if operand_type is None:
+        return None
+
+    prim = _primitive_unary_result(expr.op, operand_type)
+    if prim is not None:
+        if prim is _PRIM_MISMATCH:
+            analyzer.errors.append(
+                TypeError(expr.span, operand_type, operand_type,
+                          f"operator {expr.op.value} not defined for {operand_type}")
+            )
+            return None
+        return prim
+
+    methods = get_type_public_methods(analyzer, operand_type)
+    if methods is None:
+        return None
+    method_name = unary_op_method(expr.op)
+    method = methods.get(method_name)
+    if method is None:
+        return None
+    return method.return_type
+
+
+_PRIM_OK = object()
+_PRIM_MISMATCH = object()
+_COMPARISON = {
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.EQUAL,
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.NOT_EQUAL,
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.LESS,
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.GREATER,
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.LESS_EQUAL,
+    __import__("mashiko.parser.syntax", fromlist=["BinaryOpKind"]).BinaryOpKind.GREATER_EQUAL,
+}
+
+
+def _is_comparison(op) -> bool:
+    return op in _COMPARISON
+
+
+_NUMERIC = {
+    PrimitiveTypeSymbol.Int,
+    PrimitiveTypeSymbol.Int8, PrimitiveTypeSymbol.Int16,
+    PrimitiveTypeSymbol.Int32, PrimitiveTypeSymbol.Int64,
+    PrimitiveTypeSymbol.Uint8, PrimitiveTypeSymbol.Uint16,
+    PrimitiveTypeSymbol.Uint32, PrimitiveTypeSymbol.Uint64,
+    PrimitiveTypeSymbol.Float32, PrimitiveTypeSymbol.Float64,
+}
+_INTEGER = {
+    PrimitiveTypeSymbol.Int,
+    PrimitiveTypeSymbol.Int8, PrimitiveTypeSymbol.Int16,
+    PrimitiveTypeSymbol.Int32, PrimitiveTypeSymbol.Int64,
+    PrimitiveTypeSymbol.Uint8, PrimitiveTypeSymbol.Uint16,
+    PrimitiveTypeSymbol.Uint32, PrimitiveTypeSymbol.Uint64,
+}
+_BUILTIN_BOOL = {PrimitiveTypeSymbol.Bool}
+
+
+def _primitive_binary_result(op, left, right):
+    """Resolve a binary op on primitive types.
+
+    Returns:
+        * ``None`` — not a primitive operator, fall through to the
+          method-dispatch path;
+        * :data:`_PRIM_OK` — valid, but the actual result type depends
+          on whether ``op`` is a comparison (``Bool``) or arithmetic
+          (the common operand type);
+        * :data:`_PRIM_MISMATCH` — operand shape is wrong, an error
+          has been (or will be) reported by the caller.
+
+    Mixed-width operands coerce to the wider one (Int8 + Int16 → Int16)
+    via :func:`common_numeric_type`; cross-kind pairs (e.g. Int32 vs
+    Float64, signed vs unsigned) report a mismatch instead.
+    """
+    from ..parser.syntax import BinaryOpKind as BK
+
+    if op in (BK.LOGICAL_OR, BK.LOGICAL_AND):
+        if left in _BUILTIN_BOOL and right in _BUILTIN_BOOL:
+            return PrimitiveTypeSymbol.Bool
+        return _PRIM_MISMATCH
+
+    if op in (BK.BITWISE_OR, BK.BITWISE_XOR, BK.BITWISE_AND):
+        common = common_numeric_type(left, right)
+        if common is not None and common in _INTEGER:
+            return common
+        return _PRIM_MISMATCH
+
+    if op in (BK.EQUAL, BK.NOT_EQUAL, BK.LESS, BK.GREATER, BK.LESS_EQUAL, BK.GREATER_EQUAL):
+        if left == right:
+            return _PRIM_OK
+        if (
+            isinstance(left, PrimitiveTypeSymbol)
+            and isinstance(right, PrimitiveTypeSymbol)
+            and common_numeric_type(left, right) is not None
+        ):
+            return _PRIM_OK
+        return _PRIM_MISMATCH
+
+    if op in (BK.ADD, BK.SUBTRACT, BK.MULTIPLY, BK.DIVIDE, BK.MODULO):
+        if left in _NUMERIC and right in _NUMERIC:
+            common = common_numeric_type(left, right)
+            if common is not None:
+                return common
+        return _PRIM_MISMATCH
+
+    return None
+
+
+def _primitive_unary_result(op, operand):
+    from ..parser.syntax import UnaryOpKind as UK
+
+    if op is UK.NEGATE:
+        if operand in _NUMERIC:
+            return operand
+        return _PRIM_MISMATCH
+    if op is UK.NOT:
+        if operand in _BUILTIN_BOOL:
+            return PrimitiveTypeSymbol.Bool
+        return _PRIM_MISMATCH
+    return None
+
+
+def _type_check_conditional(
+    analyzer, expr: Conditional
+) -> Optional[TypeSymbol]:
+    cond_type = get_expression_type(analyzer, expr.condition)
+    if cond_type != PrimitiveTypeSymbol.Bool:
+        analyzer.errors.append(
+            TypeError(expr.condition.span, PrimitiveTypeSymbol.Bool, cond_type,
+                      "conditional condition must be Bool")
+        )
+    then_type = get_expression_type(analyzer, expr.then_expr)
+    else_type = get_expression_type(analyzer, expr.else_expr)
+    if then_type is None or else_type is None:
+        return None
+    if then_type != else_type:
+        analyzer.errors.append(
+            TypeError(expr.span, then_type, else_type,
+                      "conditional branches must have the same type")
+        )
+    return then_type
+
+
+def _type_check_array_literal(
+    analyzer, expr: ArrayLiteral
+) -> Optional[TypeSymbol]:
+    if not expr.elements:
+        return None
+    first = get_expression_type(analyzer, expr.elements[0])
+    if first is None:
+        return None
+    for el in expr.elements[1:]:
+        t = get_expression_type(analyzer, el)
+        if t is None:
+            continue
+        if t != first:
+            analyzer.errors.append(
+                TypeError(el.span, first, t, "array element type mismatch")
+            )
+    return GenericDefinedTypeSymbol(name="Array", type_args=(first,))
+
+
+# ---------------------------------------------------------------------------
+# Type-member lookup helpers (unchanged from earlier draft, but exposed).
+# ---------------------------------------------------------------------------
+
+
+def get_type_public_methods(
+    analyzer, t: TypeSymbol
+) -> Optional[Dict[str, MethodSymbol]]:
+    match t:
+        case UserDefinedTypeSymbol(ident=name):
+            sym = analyzer.current_scope.get_symbol(name)
+            if isinstance(sym, ClassSymbol):
+                return sym.public_methods
+            return None
+
+        case GenericDefinedTypeSymbol(name=name, type_args=type_args):
+            sym = analyzer.current_scope.get_symbol(name)
+            if isinstance(sym, ClassTemplate):
+                mapping = type_param_mapping(sym.template_params, type_args)
+                return {
+                    m_name: MethodSymbol(
+                        params=[substitute_type(p, mapping) for p in m.params],
+                        return_type=substitute_type(m.return_type, mapping),
+                        is_static=m.is_static,
+                    )
+                    for m_name, m in sym.public_methods.items()
+                }
+            if isinstance(sym, InterfaceTemplate):
+                mapping = type_param_mapping(sym.template_params, type_args)
+                return {
+                    m_name: MethodSymbol(
+                        params=[substitute_type(p, mapping) for p in m.params],
+                        return_type=substitute_type(m.return_type, mapping),
+                        is_static=m.is_static,
+                    )
+                    for m_name, m in sym.public_methods.items()
+                }
+            return None
+
+        case _:
+            return None
+
+
+def get_type_public_fields(
+    analyzer, t: TypeSymbol
+) -> Optional[Dict[str, TypeSymbol]]:
+    match t:
+        case UserDefinedTypeSymbol(ident=name):
+            sym = analyzer.current_scope.get_symbol(name)
+            if isinstance(sym, ClassSymbol):
+                return sym.public_fields
+            return None
+
+        case GenericDefinedTypeSymbol(name=name, type_args=type_args):
+            sym = analyzer.current_scope.get_symbol(name)
+            if isinstance(sym, ClassTemplate):
+                mapping = type_param_mapping(sym.template_params, type_args)
+                return {
+                    f_name: substitute_type(f_type, mapping)
+                    for f_name, f_type in sym.public_fields.items()
+                }
+            return None
+
+        case _:
+            return None

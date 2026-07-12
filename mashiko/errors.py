@@ -93,14 +93,30 @@ class ParseError(TranslationError):
     list, not raised — but the call shape is preserved so any old
     ``except ParseError`` blocks degrade gracefully if a parsed file
     contains an unexpected exception.
+
+    The constructor accepts either a :class:`Exception` (a ``LarkError``
+    from a fresh parse) or a :class:`~mashiko.span.Span` directly.
+    The ``Span`` form is used by the parser's error-recovery loop to
+    surface a translated position pointing back into the *original*
+    (un-masked) source after a recovery mask has shifted subsequent
+    character offsets.
     """
 
-    def __init__(self, lark_error: Exception) -> None:
-        self.lark_error = lark_error
-        super().__init__(_span_from_lark_error(lark_error))
+    def __init__(self, source: object) -> None:
+        if isinstance(source, Exception):
+            self.lark_error = source
+            super().__init__(_span_from_lark_error(source))
+        else:
+            # ``source`` is a Span — used by recovery-pass translation.
+            self.lark_error = None
+            super().__init__(source)
 
     def __str__(self) -> str:
+        if self.lark_error is None:
+            return "parse error"
         return str(self.lark_error)
 
     def additional_message(self) -> str:
+        if self.lark_error is None:
+            return "parse error (recovered region)"
         return str(self.lark_error).split("\n", 1)[0]

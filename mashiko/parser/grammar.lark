@@ -18,9 +18,14 @@ IF: "if"
 ELSE: "else"
 WHILE: "while"
 FOR: "for"
-BREAK: "break"
-CONTINUE: "continue"
-RETURN: "return"
+// The three control-flow keywords below can be parsed as a bare
+// identifier (IDENT → name → … → expression → expression_statement)
+// when they appear standalone, e.g. `break;`. Earley with
+// `ambiguity='explicit'` keeps the first alternative, so we raise the
+// terminal priority to make the dedicated statement form win.
+BREAK.2: "break"
+CONTINUE.2: "continue"
+RETURN.2: "return"
 
 // idents and literals
 IDENT: /[a-zA-Z_][a-zA-Z0-9_]*/
