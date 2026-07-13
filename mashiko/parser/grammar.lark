@@ -18,6 +18,7 @@ IF: "if"
 ELSE: "else"
 WHILE: "while"
 FOR: "for"
+INLINE: "inline"
 // The three control-flow keywords below can be parsed as a bare
 // identifier (IDENT → name → … → expression → expression_statement)
 // when they appear standalone, e.g. `break;`. Earley with
@@ -178,6 +179,12 @@ visibility: PUBLIC
 // Same slot semantics as `visibility`.
 static: STATIC
 
+// Optional `inline` marker that can prefix a function or method
+// declaration. A sema pass (see `_inline_expand`) substitutes the
+// callee body at the call site. Recursive inline calls fall back to
+// a normal call. Same slot semantics as `visibility` / `static`.
+inline: INLINE
+
 typed_ident: IDENT COLON type
 ?arguments: LPAREN [typed_ident (COMMA typed_ident)*] RPAREN
 ?return_type: COLON type
@@ -188,7 +195,7 @@ template_const: CONST IDENT COLON type [EQ expression]
 ?template_member: template_param | template_const
 template_decl: TEMPLATE LANGLE [template_member (COMMA template_member)*] RANGLE
 
-function_decl: [visibility] [template_decl] FUNC IDENT arguments [return_type] block
+function_decl: [visibility] [template_decl] [inline] FUNC IDENT arguments [return_type] block
 
 class_decl: [visibility] [template_decl] CLASS IDENT [depent_interfaces] LBRACE class_body RBRACE
 
@@ -198,7 +205,7 @@ field: [visibility] typed_ident SEMICOLON
 constructor: [visibility] CONSTRUCTOR arguments block
 destructor: [visibility] DESTRUCTOR LPAREN RPAREN block
 cloner: [visibility] CLONER LPAREN RPAREN block
-method: [visibility] [static] IDENT arguments [return_type] block
+method: [visibility] [static] [inline] IDENT arguments [return_type] block
 
 interface_decl: [template_decl] INTERFACE IDENT [depent_interfaces] LBRACE interface_body RBRACE
 

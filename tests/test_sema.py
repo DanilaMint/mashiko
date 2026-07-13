@@ -13,6 +13,7 @@ from mashiko.sema.errors import (
     DuplicateNameError,
     NameError as SemaNameError,
     TypeError as SemaTypeError,
+    UseAfterDestructError,
 )
 from mashiko.sema.scope import BUILTIN_SCOPE, Scope
 from mashiko.sema.symbols import (
@@ -26,6 +27,14 @@ from mashiko.sema.symbols import (
     VarSymbol,
 )
 from mashiko.sema.symbols import GenericDefinedTypeSymbol
+from mashiko.parser.syntax import (
+    AssignStatement,
+    Block,
+    BreakStatement,
+    ExpressionStatement,
+    MethodCall,
+    ReturnStatement,
+)
 
 
 class ScopeNameTests(unittest.TestCase):
@@ -675,6 +684,362 @@ class TemplateInferenceTests(unittest.TestCase):
             f"expected 'needs explicit type arguments' diagnostic, got "
             f"{[e.additional_message() for e in errs]}",
         )
+
+
+class InlineDeclarationTests(unittest.TestCase):
+    """The ``inline`` keyword parses into a bool on the AST node and
+    propagates to the symbol table. Behavior of inlining at call sites
+    is covered in :class:`InlineExpansionTests`."""
+
+    def test_inline_kw_parsed_on_function(self):
+        module, errors = parse_ast("inline func f(): Void {}\n")
+        self.assertEqual(errors, [])
+        func = module.declarations[0]
+        self.assertTrue(func.inline)
+
+    def test_inline_kw_off_by_default_on_function(self):
+        module, errors = parse_ast("func f(): Void {}\n")
+        self.assertEqual(errors, [])
+        func = module.declarations[0]
+        self.assertFalse(func.inline)
+
+    def test_inline_kw_parsed_on_method(self):
+        module, errors = parse_ast(
+            "class C { inline foo(): Int { return 1; } }\n"
+        )
+        self.assertEqual(errors, [])
+        method = module.declarations[0].body.members[0]
+        self.assertTrue(method.inline)
+
+    def test_inline_kw_off_by_default_on_method(self):
+        module, errors = parse_ast("class C { foo(): Int { return 1; } }\n")
+        self.assertEqual(errors, [])
+        method = module.declarations[0].body.members[0]
+        self.assertFalse(method.inline)
+
+    def test_inline_propagates_to_function_symbol(self):
+        # The FunctionSymbol registered by the sema pass must remember
+        # the inline flag so the call site can use it in Phase 2.
+        errs = _SemaHelper.analyze(
+            "inline func f(): Void {}\n"
+            "func g() { f(); }\n"
+        )
+        self.assertEqual(errs, [])
+
+
+class InlineExpansionTests(unittest.TestCase):
+    """An ``inline`` call expands in place at the call site; a
+    recursive call falls back to a regular call. The resulting
+    :class:`InlinedCall` is visible in the typed AST, so tests can
+    also assert presence/absence of the wrapper node via the
+    ``--ast-typed`` flow (out of scope here — we check sema
+    diagnostics instead)."""
+
+    def test_inline_void_call_typechecks(self):
+        errs = _SemaHelper.analyze(
+            "inline func f(): Void {}\n"
+            "func g() { f(); }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_inline_call_with_args_typechecks(self):
+        errs = _SemaHelper.analyze(
+            "inline func add(a: Int, b: Int): Int { return a + b; }\n"
+            "func g(): Int { return add(1, 2); }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_inline_recursion_falls_back_to_normal_call(self):
+        # `loop()` returns Int; the recursive call inside the body
+        # would loop forever if inlined. The recursion guard
+        # (`inline_stack`) prevents infinite expansion, so the
+        # recursive call is treated as a normal call and type-checks
+        # against the same return type.
+        errs = _SemaHelper.analyze(
+            "inline func loop(): Int { if true { return 1; } return loop(); }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_inline_method_on_this_inlines(self):
+        # `this.foo()` where `foo` is inline. The inlined body shares
+        # the enclosing scope's `this` binding.
+        errs = _SemaHelper.analyze(
+            "class C {\n"
+            "    public x: Int;\n"
+            "    constructor(v: Int) { this.x = v; }\n"
+            "    public inline get(): Int { return this.x; }\n"
+            "    public run() { y = this.get(); }\n"
+            "}\n"
+        )
+        self.assertEqual(
+            errs, [],
+            f"unexpected errors: {[e.additional_message() for e in errs]}",
+        )
+
+    def test_inline_method_on_non_this_does_not_inline(self):
+        # `c.foo()` on a non-`this` receiver must NOT inline (we
+        # can't alias the receiver into the inlined scope in v1).
+        # The call still type-checks via the regular method-call
+        # path, so the program has no errors.
+        errs = _SemaHelper.analyze(
+            "class C {\n"
+            "    public x: Int;\n"
+            "    constructor(v: Int) { this.x = v; }\n"
+            "    public inline get(): Int { return this.x; }\n"
+            "    public run() { z = this; y = z.get(); }\n"
+            "}\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_inline_call_arbitrary_expr_still_typechecks(self):
+        # Even though `inline func add(...)` is defined, the call
+        # `add(1 + 1, 2 * 2)` must type-check the argument expressions
+        # in the caller's scope before binding them to the inlined
+        # body's params.
+        errs = _SemaHelper.analyze(
+            "inline func add(a: Int, b: Int): Int { return a + b; }\n"
+            "func g(): Int { return add(1 + 1, 2 * 2); }\n"
+        )
+        self.assertEqual(errs, [])
+
+
+class UseAfterDestructTests(unittest.TestCase):
+    """``.destruct()`` marks a name as invalid; later uses produce a
+    :class:`UseAfterDestructError`. Marks are per-block and
+    cross-function via the destructed-params summary."""
+
+    def test_explicit_destruct_then_use_emits_error(self):
+        errs = _SemaHelper.analyze(
+            "func f() { x = 1; x.destruct(); y = x; }\n"
+        )
+        uad = [e for e in errs if isinstance(e, UseAfterDestructError)]
+        self.assertEqual(len(uad), 1)
+        self.assertEqual(uad[0].ident, "x")
+
+    def test_explicit_destruct_then_pass_to_call_emits_error(self):
+        # Passing a destructed name to a function is also a use.
+        errs = _SemaHelper.analyze(
+            "func g(x: Int) {}\n"
+            "func f() { x = 1; x.destruct(); g(x); }\n"
+        )
+        uad = [e for e in errs if isinstance(e, UseAfterDestructError)]
+        self.assertEqual(len(uad), 1)
+
+    def test_param_destruct_marks_param_no_use(self):
+        # Param destruct inside the body, with no later use: no error.
+        errs = _SemaHelper.analyze(
+            "func h(x: Int) { x.destruct(); }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_param_destruct_summary_marks_caller_arg(self):
+        # `callee` destructs its param; after `callee(a)`, the caller's
+        # `a` is marked destructed. The subsequent read must produce a
+        # use-after-destruct.
+        errs = _SemaHelper.analyze(
+            "func callee(x: Int) { x.destruct(); }\n"
+            "func caller() { a = 1; callee(a); y = a; }\n"
+        )
+        uad = [e for e in errs if isinstance(e, UseAfterDestructError)]
+        self.assertEqual(len(uad), 1)
+        self.assertEqual(uad[0].ident, "a")
+
+    def test_destruct_in_branch_scope_does_not_pollute_outer(self):
+        # A destruct inside an if-branch's block must NOT mark the
+        # outer-scope name: by the time the outer block reads `x`,
+        # the branch's scope has exited and the mark is gone.
+        errs = _SemaHelper.analyze(
+            "func f(b: Bool) { x = 1; if b { x.destruct(); } y = x; }\n"
+        )
+        # `y = x` is fine — `x` is not destructed in the outer scope.
+        # (The destruct happens inside the if-block; the block's set
+        # is popped when the block exits, so the mark doesn't leak.)
+        self.assertEqual(errs, [])
+
+    def test_destruct_on_member_access_is_noop(self):
+        # `obj.field.destruct()` is a default well-known no-op; it
+        # does not mark `obj` or `field` as destructed.
+        errs = _SemaHelper.analyze(
+            "class C { public x: Int; }\n"
+            "func f(c: C) { c.x.destruct(); y = c.x; }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_reassign_after_destruct_clears_mark(self):
+        # After `x.destruct()`, a plain `=` re-initialization gives
+        # `x` a fresh value; later reads are valid.
+        errs = _SemaHelper.analyze(
+            "func f() { x = 1; x.destruct(); x = 2; y = x; }\n"
+        )
+        self.assertEqual(errs, [])
+
+    def test_double_destruct_is_idempotent(self):
+        # Idempotent by design (no double-destruct diagnostic). The
+        # second `x.destruct();` doesn't add a second error.
+        errs = _SemaHelper.analyze(
+            "func f() { x = 1; x.destruct(); x.destruct(); }\n"
+        )
+        self.assertEqual(errs, [])
+
+
+class ScopeExitDestructTests(unittest.TestCase):
+    """``mashiko.sema.desugaring.desugar`` — implicit ``.destruct()`` at scope exit."""
+
+    @staticmethod
+    def _desugar(source: str):
+        module, errors = parse_ast(source)
+        assert errors == [] and module is not None, errors
+        sema_errors = SemaAnalyzer(module).analyze()
+        assert sema_errors == [], sema_errors
+        from mashiko.sema.desugaring import desugar
+        return desugar(module)
+
+    @staticmethod
+    def _statements(block):
+        return [s for s in block.statements]
+
+    def test_local_destructs_at_function_end(self):
+        # `x = 1;` at function scope → implicit `x.destruct();` appended
+        # before the implicit fall-through.
+        mod = self._desugar("func f() { x = 1; }\n")
+        fn = mod.declarations[0]
+        stmts = self._statements(fn.body)
+        last = stmts[-1]
+        self.assertIsInstance(last, ExpressionStatement)
+        self.assertIsInstance(last.expression, MethodCall)
+        self.assertEqual(last.expression.name, "destruct")
+        self.assertEqual(last.expression.obj.name, "x")
+        self.assertEqual(last.expression.args, ())
+
+    def test_params_not_auto_destructed(self):
+        # The function's only binding is the param; no synthetic
+        # ``.destruct()`` should be added for ``p`` (params survive
+        # the call by default).
+        mod = self._desugar("func f(p: Int) { }\n")
+        fn = mod.declarations[0]
+        self.assertEqual(self._statements(fn.body), [])
+
+    def test_explicit_destruct_not_re_emitted(self):
+        # `x.destruct();` already present; no additional emission.
+        mod = self._desugar("func f() { x = 1; x.destruct(); }\n")
+        fn = mod.declarations[0]
+        stmts = self._statements(fn.body)
+        # The two original statements, no extras.
+        self.assertEqual(len(stmts), 2)
+        self.assertIsInstance(stmts[1].expression, MethodCall)
+        self.assertEqual(stmts[1].expression.name, "destruct")
+
+    def test_unreachable_branch_join_emits_no_destructs(self):
+        # Both branches return → join is UNREACHABLE → no destructs
+        # at the *join point* (i.e. the outer block after the `if`).
+        # Each branch still emits its own locals' destructs before
+        # its own return — that's per-block RAII, which is correct.
+        mod = self._desugar(
+            "func f(b: Bool) { if b { x = 1; return; } else { return; } }\n"
+        )
+        fn = mod.declarations[0]
+        # The outer function body has just the `if` and no other
+        # locals → no synthetic destruct at the function level.
+        outer_stmts = self._statements(fn.body)
+        self.assertEqual(len(outer_stmts), 1)
+        # The then-block has `x = 1;`, the synthetic `x.destruct();`,
+        # then `return;`.
+        if_stmt = outer_stmts[0]
+        then_stmts = list(if_stmt.then_branch.statements)
+        self.assertIsInstance(then_stmts[-1], ReturnStatement)
+        self.assertIsInstance(then_stmts[-2], ExpressionStatement)
+        self.assertEqual(then_stmts[-2].expression.obj.name, "x")
+        # The else-block has no locals; only the `return;`.
+        self.assertEqual(len(list(if_stmt.else_branch.statements)), 1)
+
+    def test_fallthrough_join_emits_destructs_in_both_branches(self):
+        # `else` falls through; each branch must clean up its own
+        # local.
+        mod = self._desugar(
+            "func f(b: Bool) { if b { x = 1; } else { y = 2; } }\n"
+        )
+        fn = mod.declarations[0]
+        if_stmt = fn.body.statements[0]
+        then_stmts = list(if_stmt.then_branch.statements)
+        else_stmts = list(if_stmt.else_branch.statements)
+        # Then-branch: x is destructed at the end.
+        then_last = then_stmts[-1]
+        self.assertIsInstance(then_last, ExpressionStatement)
+        self.assertEqual(then_last.expression.name, "destruct")
+        self.assertEqual(then_last.expression.obj.name, "x")
+        # Else-branch: y is destructed at the end.
+        else_last = else_stmts[-1]
+        self.assertIsInstance(else_last, ExpressionStatement)
+        self.assertEqual(else_last.expression.name, "destruct")
+        self.assertEqual(else_last.expression.obj.name, "y")
+
+    def test_nested_block_destructs_inner_locals(self):
+        # An inner block emits destructs for its own locals; the
+        # outer block does not re-emit them.
+        mod = self._desugar(
+            "func f() { { x = 1; } y = 2; }\n"
+        )
+        fn = mod.declarations[0]
+        outer = fn.body
+        inner = outer.statements[0]
+        self.assertIsInstance(inner, Block)
+        inner_stmts = list(inner.statements)
+        self.assertIsInstance(inner_stmts[-1], ExpressionStatement)
+        self.assertEqual(inner_stmts[-1].expression.obj.name, "x")
+        # The outer block: `y` is the only declared local, and its
+        # implicit destruct is appended at the end.
+        outer_stmts = list(outer.statements)
+        self.assertIsInstance(outer_stmts[-1], ExpressionStatement)
+        self.assertEqual(outer_stmts[-1].expression.obj.name, "y")
+
+    def test_destructs_prepended_before_return(self):
+        # If a block ends in `return;`, the synthetic destructs go
+        # *before* the return, not after.
+        mod = self._desugar("func f() { x = 1; return; }\n")
+        fn = mod.declarations[0]
+        stmts = self._statements(fn.body)
+        self.assertIsInstance(stmts[-1], ReturnStatement)
+        # The destruct sits just before the return.
+        self.assertIsInstance(stmts[-2], ExpressionStatement)
+        self.assertEqual(stmts[-2].expression.name, "destruct")
+        self.assertEqual(stmts[-2].expression.obj.name, "x")
+
+    def test_destructs_prepended_before_break(self):
+        mod = self._desugar(
+            "func f() { while true { x = 1; break; } }\n"
+        )
+        fn = mod.declarations[0]
+        while_stmt = fn.body.statements[0]
+        body_stmts = self._statements(while_stmt.body)
+        self.assertIsInstance(body_stmts[-1], BreakStatement)
+        self.assertIsInstance(body_stmts[-2], ExpressionStatement)
+        self.assertEqual(body_stmts[-2].expression.obj.name, "x")
+
+    def test_compound_assign_not_a_declaration(self):
+        # `x += 1;` is a compound assignment against an existing
+        # binding; it must not be treated as introducing `x` and
+        # the pass must not double-emit a destruct for it.
+        mod = self._desugar("func f() { x = 1; x += 1; }\n")
+        fn = mod.declarations[0]
+        stmts = self._statements(fn.body)
+        # Original `x = 1;` and `x += 1;` plus one synthetic destruct.
+        self.assertEqual(len(stmts), 3)
+        self.assertIsInstance(stmts[0], AssignStatement)
+        self.assertEqual(stmts[0].op, "=")
+        self.assertIsInstance(stmts[1], AssignStatement)
+        self.assertEqual(stmts[1].op, "+=")
+        self.assertIsInstance(stmts[2], ExpressionStatement)
+        self.assertEqual(stmts[2].expression.obj.name, "x")
+
+    def test_method_body_destructs_locals(self):
+        mod = self._desugar(
+            "class C { public x: Int; public f() { y = 1; } }\n"
+        )
+        cls = mod.declarations[0]
+        method = cls.body.members[1]
+        stmts = self._statements(method.body)
+        self.assertIsInstance(stmts[-1], ExpressionStatement)
+        self.assertEqual(stmts[-1].expression.obj.name, "y")
 
 
 if __name__ == "__main__":

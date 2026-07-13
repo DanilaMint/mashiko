@@ -19,6 +19,7 @@ from . import __version__
 from .parser import parse_ast, parse_ast_file
 from .print_ast import print_ast
 from .sema.core import SemaAnalyzer
+from .sema.desugaring import desugar
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -37,6 +38,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ast-typed",
         action="store_true",
         help="print the typed AST (frozen-dataclass form) to stdout",
+    )
+    p.add_argument(
+        "--ast-desugared",
+        action="store_true",
+        help="print the desugared AST (with synthesized .destruct() calls "
+             "at scope exit) to stdout. Requires --no-sema to be absent.",
     )
     p.add_argument(
         "--no-sema",
@@ -77,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
             print(err.into_str(src_code))
         if sema_errors:
             return 1
+
+    if args.ast_desugared:
+        print_ast(desugar(ast))
 
     return 0
 

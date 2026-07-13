@@ -91,7 +91,10 @@ def register_function(analyzer, f: FunctionDecl):
         )
         if any(p is None for p in params) or return_type is None:
             return
-        sym = FunctionSymbol(params, return_type)
+        sym = FunctionSymbol(
+            params, return_type, inline=f.inline,
+            body=f.body, ast_params=tuple(f.params),
+        )
     else:
         template_params = template_type_params(f.template, analyzer.current_scope)
         # Make type-param placeholders visible to type_to_symbol
@@ -122,6 +125,9 @@ def register_function(analyzer, f: FunctionDecl):
             template_params=template_params,
             params=params,
             return_type=return_type,
+            inline=f.inline,
+            body=f.body,
+            ast_params=tuple(f.params),
         )
 
     analyzer.current_scope.push_symbol(f.name, sym)
@@ -169,7 +175,10 @@ def register_class(analyzer, c: ClassDecl):
                     )
                     if any(p is None for p in params) or return_type is None:
                         continue
-                    method_sym = MethodSymbol(params, return_type, member.static)
+                    method_sym = MethodSymbol(
+                        params, return_type, member.static, inline=member.inline,
+                        body=member.body, ast_params=tuple(member.params),
+                    )
                     if member.visibility:
                         public_methods[member.name] = method_sym
                     else:

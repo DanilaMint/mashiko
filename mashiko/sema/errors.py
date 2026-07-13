@@ -37,6 +37,24 @@ class DuplicateNameError(NameError):
         return f"name `{self.ident}` is already declared in this scope"
 
 
+class UseAfterDestructError(NameError):
+    """Raised when an identifier is used after its value has been
+    destructed.
+
+    The destruct may be either explicit (``x.destruct();``) or implicit
+    (end-of-scope RAII), and the use site may be in the same scope as
+    the destruct or in a caller's scope when the destruct happened
+    inside a callee (cross-function summary). In every case the rule
+    is the same: a destructed binding is no longer readable.
+
+    Subclasses :class:`NameError` so existing error handlers keep
+    working; the message identifies the specific cause.
+    """
+
+    def additional_message(self) -> str:
+        return f"name `{self.ident}` is used after being destructed"
+
+
 class TypeError(TranslationError):
     """Raised when an expression has a type different from what the
     surrounding context requires (assignment, return, condition, etc.).

@@ -142,17 +142,24 @@ class TreeToAST(Transformer):
         # represented by `None`, which the call sites translate to False.
         return True
 
+    def inline(self, meta, children):
+        # `inline` matches the literal `inline` keyword and always
+        # represents True. Absence of the slot on the parent rule is
+        # represented by `None`, which the call sites translate to False.
+        return True
+
     def function_decl(self, meta, children):
-        # children: [visibility_or_None, template_or_None, FUNC, IDENT,
-        #             arguments_tree, return_type_or_None, block]
+        # children: [visibility_or_None, template_or_None, inline_or_None,
+        #             FUNC, IDENT, arguments_tree, return_type_or_None, block]
         return FunctionDecl(
             span=_span_from_meta(meta),
             visibility=children[0] is not None,
             template=children[1],
-            name=str(children[3]),
-            params=tuple(children[4]),
-            return_type=children[5],
-            body=children[6],
+            inline=children[2] is not None,
+            name=str(children[4]),
+            params=tuple(children[5]),
+            return_type=children[6],
+            body=children[7],
         )
 
     def class_decl(self, meta, children):
@@ -267,16 +274,17 @@ class TreeToAST(Transformer):
         )
 
     def method(self, meta, children):
-        # children: [visibility_or_None, static_or_None, IDENT, arguments_tree,
-        #             return_type_or_None, block]
+        # children: [visibility_or_None, static_or_None, inline_or_None,
+        #             IDENT, arguments_tree, return_type_or_None, block]
         return Method(
             span=_span_from_meta(meta),
             visibility=children[0] is not None,
             static=children[1] is not None,
-            name=str(children[2]),
-            params=tuple(children[3]),
-            return_type=children[4],
-            body=children[5],
+            inline=children[2] is not None,
+            name=str(children[3]),
+            params=tuple(children[4]),
+            return_type=children[5],
+            body=children[6],
         )
 
     def interface_body(self, meta, children):

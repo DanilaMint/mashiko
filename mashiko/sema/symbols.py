@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 
 from typing_extensions import Dict
 
-from ..parser.syntax import Expression
+from ..parser.syntax import Block, Expression, Param
 
 
 class PrimitiveTypeSymbol(Enum):
@@ -147,6 +147,18 @@ TypeSymbol = (
 class FunctionSymbol:
     params: List[TypeSymbol]
     return_type: TypeSymbol
+    inline: bool = False
+    # AST-level fields populated by `register_function` so the
+    # inline-expansion pass (Phase 2) can re-check the body in a
+    # fresh scope at the call site. ``body`` is the original
+    # :class:`Block`; ``ast_params`` is the tuple of :class:`Param`
+    # AST nodes (with their original names — required to bind
+    # arguments to params in the inlined scope). ``None``/empty for
+    # functions registered before this attribute was added (kept
+    # default-initialised for backwards compatibility with existing
+    # tests that construct :class:`FunctionSymbol` directly).
+    body: Optional[Block] = None
+    ast_params: Tuple[Param, ...] = ()
 
 
 @dataclass
@@ -162,6 +174,9 @@ class FunctionTemplate:
     template_params: Tuple[TemplateParamSymbol, ...]
     params: List[TypeSymbol]
     return_type: TypeSymbol
+    inline: bool = False
+    body: Optional[Block] = None
+    ast_params: Tuple[Param, ...] = ()
 
 
 @dataclass
@@ -169,6 +184,9 @@ class MethodSymbol:
     params: List[TypeSymbol]
     return_type: TypeSymbol
     is_static: bool
+    inline: bool = False
+    body: Optional[Block] = None
+    ast_params: Tuple[Param, ...] = ()
 
 
 @dataclass

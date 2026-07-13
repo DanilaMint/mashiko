@@ -47,6 +47,7 @@ class Module(Node):
 class FunctionDecl(Node):
     visibility: bool
     template: Optional[TemplateDecl]
+    inline: bool
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]
@@ -132,6 +133,7 @@ class Cloner(Node):
 class Method(Node):
     visibility: bool
     static: bool
+    inline: bool
     name: str
     params: tuple[Param, ...]
     return_type: Optional[Type]
@@ -435,6 +437,35 @@ class ArrayLiteral(Node):
     elements: tuple[Expression, ...]
 
 
+@dataclass(frozen=True)
+class InlinedCall(Node):
+    """A call to an ``inline`` function/method that has been expanded
+    in place at the call site by the semantic analyzer.
+
+    ``callee`` is the function/method name (``"foo"`` for ``foo()`` or
+    ``"C::bar"`` for ``C.bar()``). ``args`` preserves the original
+    call's argument list — kept on the node so error spans and future
+    diagnostic passes can still point at the call site.
+
+    ``block`` is the callee's body with type-param placeholders
+    substituted and params rebound to the call's argument expressions
+    in a fresh :class:`Scope`. The block's value is determined by
+    walking it for the first :class:`ReturnStatement` (or implicitly
+    :class:`~mashiko.sema.symbols.PrimitiveTypeSymbol.Void` for a
+    void-returning callee). ``return_type`` is stored alongside so
+    downstream passes don't have to re-derive it.
+
+    The :class:`mashiko.sema.desugaring` pass later walks the
+    inlined block to add ``.destruct()`` calls for any locals bound
+    in the inlined body.
+    """
+
+    callee: str
+    args: tuple[Expression, ...]
+    block: Block
+    return_type: Type
+
+
 Expression = Union[
     IntLiteral,
     FloatLiteral,
@@ -452,4 +483,5 @@ Expression = Union[
     Conditional,
     ParenExpr,
     ArrayLiteral,
+    InlinedCall,
 ]

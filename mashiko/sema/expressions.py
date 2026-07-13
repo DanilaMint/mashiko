@@ -20,7 +20,7 @@ here only read them.
 
 from typing import Dict, Optional
 
-from .errors import NameError, TypeError
+from .errors import NameError, TypeError, UseAfterDestructError
 from .coercions import common_numeric_type, types_compatible
 from .op_method import binary_op_method, unary_op_method
 from ..parser.syntax import (
@@ -42,10 +42,12 @@ from ..parser.syntax import (
     FunctionCall,
     IfStatement,
     Indexing,
+    InlinedCall,
     IntLiteral,
     IterationVariable,
     MaybeUnwrap,
     MemberAccess,
+    MemberLValue,
     MethodCall,
     Name,
     ParenExpr,
@@ -81,14 +83,56 @@ from .templates import infer_template_args, substitute_type, type_param_mapping
 
 
 def check_block(analyzer, ast: Block):
-    """Open a new lexical scope around ``ast`` and type-check each statement."""
+    """Open a new lexical scope around ``ast`` and type-check each statement.
+
+    A new :class:`Scope` is pushed for the block's bindings. A new
+    empty set is also pushed onto ``analyzer.scope_destructs`` so
+    destruct tracking (Phase 3) is per-block: names destructed
+    inside the block are added to this set, and the destruct-mark
+    disappears when the block exits (the popped set is unioned into
+    ``analyzer.function_destructs`` for the cross-function summary,
+    but no longer blocks later reads in the outer scope).
+    """
     parent = analyzer.current_scope
     analyzer.current_scope = Scope(parent)
+    analyzer.scope_destructs.append(set())
     try:
         for stmt in ast.statements:
             check_statement(analyzer, stmt)
     finally:
+        popped = analyzer.scope_destructs.pop()
+        analyzer.function_destructs |= popped
         analyzer.current_scope = parent
+
+
+def _name_is_destructed(analyzer, name: str) -> bool:
+    """True if ``name`` has been destructed in any enclosing block.
+
+    Walks the ``scope_destructs`` stack (innermost block first). A
+    mark in an outer block also counts — a name in a parent block is
+    destructed at the parent's scope exit, and any use before that
+    exit in a nested block is still a use-after-destruct.
+    """
+    for s in reversed(analyzer.scope_destructs):
+        if name in s:
+            return True
+    return False
+
+
+def _check_not_destructed(analyzer, expr) -> None:
+    """Emit :class:`UseAfterDestructError` if ``expr`` names a
+    destructed local/param.
+
+    Only :class:`Name` references are tracked; ``MemberAccess``,
+    ``Indexing``, etc. are never destructed in the v1 model
+    (only locals and params can be the LHS of ``.destruct()``).
+    The function pushes the diagnostic onto ``analyzer.errors`` and
+    does not return a value — the caller has its own return path.
+    """
+    if not isinstance(expr, Name):
+        return
+    if _name_is_destructed(analyzer, expr.name):
+        analyzer.errors.append(UseAfterDestructError(expr.span, expr.name))
 
 
 def check_statement(analyzer, stmt: Statement):
@@ -236,12 +280,27 @@ def _check_assign(
             return
         if target_type is None and isinstance(target, Name):
             analyzer.current_scope.push_symbol(target.name, VarSymbol(type=value_type))
+            # A fresh binding is a new object: clear any prior
+            # use-after-destruct mark for this name. The mark may
+            # live in any set pushed for a nested block; drop it
+            # from each of them and from the cumulative set.
+            for s in analyzer.scope_destructs:
+                s.discard(target.name)
+            analyzer.function_destructs.discard(target.name)
             return
         if not types_compatible(value_type, target_type):
             analyzer.errors.append(
                 TypeError(value.span, target_type or value_type, value_type,
                           "assignment type mismatch")
             )
+            return
+        # Existing binding with matching type: a plain `=` rebinds
+        # the name to a fresh value, so clear any prior destruct
+        # mark the same way a declaration would.
+        if isinstance(target, Name):
+            for s in analyzer.scope_destructs:
+                s.discard(target.name)
+            analyzer.function_destructs.discard(target.name)
         return
 
     # Compound assignment. target must already be declared.
@@ -321,10 +380,12 @@ def _assign_target_type(
 ) -> tuple[Optional[TypeSymbol], Optional[Name]]:
     """Return the declared :class:`TypeSymbol` of an assignment target.
 
-    For a plain :class:`Name` the symbol table is consulted. For an
-    indexed/tuple/member access we return ``(None, None)`` — those
-    l-values can only appear in plain assignment, never as a
-    declaration site.
+    For a plain :class:`Name` the symbol table is consulted. For a
+    :class:`MemberLValue` (e.g. ``this.x = ...``) the receiver's
+    type is resolved and the member is looked up in the receiver's
+    public field table. For an indexed/tuple access we return
+    ``(None, None)`` — those l-values can only appear in plain
+    assignment, never as a declaration site.
     """
     if isinstance(target, Name):
         sym = analyzer.current_scope.get_symbol(target.name)
@@ -336,6 +397,14 @@ def _assign_target_type(
             # functions are not assignable
             return sym.return_type, target  # best-effort, may produce a confusing error
         return None, target
+    if isinstance(target, MemberLValue):
+        obj_type = get_expression_type(analyzer, target.obj)
+        if obj_type is None:
+            return None, None
+        fields = get_type_public_fields(analyzer, obj_type)
+        if fields is None:
+            return None, None
+        return fields.get(target.name), None
     return None, None
 
 
@@ -397,11 +466,15 @@ def get_expression_type(analyzer, expr: Expression) -> Optional[TypeSymbol]:
         case ArrayLiteral():
             return _type_check_array_literal(analyzer, expr)
 
+        case InlinedCall():
+            return _type_check_inlined_call(analyzer, expr)
+
         case _:
             return None
 
 
 def _resolve_name(analyzer, expr: Name) -> Optional[TypeSymbol]:
+    _check_not_destructed(analyzer, expr)
     sym = analyzer.current_scope.get_symbol(expr.name)
     if sym is None:
         analyzer.errors.append(NameError(expr.span, expr.name))
@@ -433,6 +506,15 @@ def _type_check_call(analyzer, expr: FunctionCall) -> Optional[TypeSymbol]:
         analyzer.errors.append(NameError(expr.span, expr.name))
         return None
 
+    # Phase 2: try to inline-expand before doing the normal call
+    # checks. If the symbol is inline and not recursing, this re-checks
+    # the body in a fresh scope and returns an `InlinedCall`. The
+    # recursion guard in `_try_inline_expand_call` ensures mutual
+    # recursion falls back to the normal call path.
+    inlined = _try_inline_expand_call(analyzer, expr)
+    if inlined is not None:
+        return inlined.return_type
+
     if isinstance(sym, FunctionSymbol):
         _check_arity(analyzer, expr.span, len(sym.params), len(expr.args), expr.name)
         for arg, param_type in zip(expr.args, sym.params):
@@ -444,6 +526,14 @@ def _type_check_call(analyzer, expr: FunctionCall) -> Optional[TypeSymbol]:
                     TypeError(arg.span, param_type, at,
                               f"argument of `{expr.name}` has wrong type")
                 )
+        # Phase 3: cross-function use-after-destruct. If the callee
+        # destructed any of its params, the caller's argument at the
+        # corresponding position is marked destructed in the caller's
+        # scope. Only :class:`Name` args are marked — composite
+        # expressions are not tracked.
+        _propagate_callee_destructs(
+            analyzer, sym, sym.ast_params, expr.args
+        )
         return sym.return_type
 
     if isinstance(sym, FunctionTemplate):
@@ -539,9 +629,52 @@ def _check_arity(analyzer, span, expected: int, got: int, name: str) -> None:
         )
 
 
+def _propagate_callee_destructs(
+    analyzer, callee_sym, callee_ast_params, call_args
+) -> None:
+    """Mark the caller's args destructed if the callee destructed
+    the corresponding param.
+
+    Reads ``analyzer.destructed_params[id(callee_sym)]`` — the
+    summary recorded by :meth:`_check_in_function_scope` after the
+    callee's body was checked. For each param name in that summary
+    at position ``i``, if ``call_args[i]`` is a :class:`Name`, that
+    name is added to the *current* block's destruct set in the
+    caller's :attr:`scope_destructs` stack.
+
+    For a non-Name arg (``f(g())`` where ``g()`` returns a fresh
+    value) we don't mark anything — the result is a temporary and
+    has no destruct lifetime to track.
+    """
+    summary = analyzer.destructed_params.get(id(callee_sym))
+    if not summary:
+        return
+    for i, arg in enumerate(call_args):
+        if i >= len(callee_ast_params):
+            break
+        param_name = callee_ast_params[i].name
+        if param_name in summary and isinstance(arg, Name):
+            analyzer.scope_destructs[-1].add(arg.name)
+
+
 def _type_check_method_call(
     analyzer, expr: MethodCall
 ) -> Optional[TypeSymbol]:
+    # Phase 3: ``.destruct()`` is a well-known method that every
+    # type has by default. Special-case it before the regular
+    # method-resolution path so we don't require the type to actually
+    # declare a method with that name. The call takes no arguments
+    # and returns Void; calling it on a local/param (a :class:`Name`)
+    # adds the name to the current block's destruct set so any
+    # later use produces a :class:`UseAfterDestructError`. On a
+    # non-:class:`Name` receiver (e.g. ``obj.field.destruct()``) the
+    # call is a default no-op — the mark only tracks locals/params.
+    if expr.name == "destruct":
+        _check_arity(analyzer, expr.span, 0, len(expr.args), "destruct")
+        if isinstance(expr.obj, Name):
+            analyzer.scope_destructs[-1].add(expr.obj.name)
+        return PrimitiveTypeSymbol.Void
+
     obj_type = get_expression_type(analyzer, expr.obj)
     if obj_type is None:
         return None
@@ -553,6 +686,15 @@ def _type_check_method_call(
         )
         return None
     method = methods.get(expr.name)
+
+    # Phase 2: try to inline-expand the method call. Gated to
+    # `this.foo()` so the inlined body shares the enclosing scope's
+    # `this` binding. The recursion guard in
+    # `_try_inline_expand_method_call` ensures mutual recursion falls
+    # back to the normal call path.
+    inlined = _try_inline_expand_method_call(analyzer, expr, method)
+    if inlined is not None:
+        return inlined.return_type
     if method is None:
         analyzer.errors.append(
             TypeError(expr.span, PrimitiveTypeSymbol.Void, PrimitiveTypeSymbol.Void,
@@ -569,6 +711,14 @@ def _type_check_method_call(
                 TypeError(arg.span, param_type, at,
                           f"argument of `{expr.name}` has wrong type")
             )
+    # Phase 3: cross-function use-after-destruct propagation for
+    # methods. Only fires for non-inline methods (inline methods
+    # already do their destruct work in the inlined body, where the
+    # param bindings are local to the inlined scope).
+    if method is not None and not method.inline:
+        _propagate_callee_destructs(
+            analyzer, method, method.ast_params, expr.args
+        )
     return method.return_type
 
 
@@ -631,6 +781,160 @@ def _type_check_member_access(
         )
         return None
     return field_type
+
+
+# ---------------------------------------------------------------------------
+# Inline expansion (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _type_check_inlined_call(
+    analyzer, expr: InlinedCall
+) -> Optional[TypeSymbol]:
+    """Type-check a previously-expanded :class:`InlinedCall`.
+
+    The body has already been checked when the inline call was
+    produced (or at registration time for the recursive-fallback
+    path). The return type is stored on the node itself, so this is
+    a one-liner. The :mod:`mashiko.sema.desugaring` pass later walks
+    the inlined block to add ``.destruct()`` calls for any locals
+    bound in the inlined body.
+    """
+    return expr.return_type
+
+
+def _try_inline_expand_call(
+    analyzer, expr: FunctionCall
+) -> Optional[InlinedCall]:
+    """Try to expand an inline function call in place at the call site.
+
+    Returns an :class:`InlinedCall` if expansion succeeded, ``None``
+    otherwise. The caller (:func:`_type_check_call`) treats ``None`` as
+    a signal to fall back to the regular call path.
+
+    Expansion is performed in five steps:
+
+    1. Look up the symbol. Must be a :class:`FunctionSymbol`
+       (templates are not inlined in the v1 — they need type-param
+       substitution in the body AST, which is non-trivial for frozen
+       dataclasses). Must be ``inline=True`` and have a body attached
+       (populated by ``register_function``).
+    2. Recursion guard: if the symbol is already on
+       ``analyzer.inline_stack``, return ``None`` so the call falls
+       back to a normal call. This is what makes direct self-recursion
+       ``inline func loop(): Int { return loop(); }`` work — the
+       inner call becomes a regular call.
+    3. Push the symbol onto ``inline_stack``. Open a fresh
+       :class:`Scope` and ``scope_destructs`` stack so the inlined
+       body's destruct tracking is isolated from the caller's.
+    4. Bind each ``Param`` to a fresh :class:`VarSymbol` whose type is
+       the corresponding argument expression's type. Re-check the
+       body via :func:`check_block`.
+    5. Pop the inline stack, scope, and destructs; return the
+       :class:`InlinedCall` wrapping the original body block.
+
+    The body has already been checked once at registration
+    (:meth:`mashiko.sema.core.SemaAnalyzer.check_function`); the
+    second pass at the call site re-runs the check in a fresh scope
+    so type errors specific to the inlined arguments (and the
+    recursion guard) are reported. For the v1 we accept the
+    duplicate diagnostics — they surface in the same order they
+    were emitted, so a stable grep for ``additional_message`` still
+    matches the same set of issues.
+    """
+    sym = analyzer.current_scope.get_symbol(expr.name)
+    if sym is None or not isinstance(sym, FunctionSymbol):
+        return None
+    if not sym.inline or sym.body is None:
+        return None
+    if sym in analyzer.inline_stack:
+        return None
+
+    prev_scope = analyzer.current_scope
+    prev_destructs = analyzer.scope_destructs
+    prev_return = analyzer.current_return_type
+    analyzer.current_scope = Scope(prev_scope)
+    analyzer.scope_destructs = []
+    analyzer.current_return_type = sym.return_type
+    analyzer.inline_stack.append(sym)
+    try:
+        for param_ast, arg in zip(sym.ast_params, expr.args):
+            arg_type = get_expression_type(analyzer, arg)
+            if arg_type is None:
+                continue
+            analyzer.current_scope.push_symbol(
+                param_ast.name, VarSymbol(type=arg_type)
+            )
+        check_block(analyzer, sym.body)
+    finally:
+        analyzer.inline_stack.pop()
+        analyzer.current_scope = prev_scope
+        analyzer.scope_destructs = prev_destructs
+        analyzer.current_return_type = prev_return
+
+    return InlinedCall(
+        span=expr.span,
+        callee=expr.name,
+        args=tuple(expr.args),
+        block=sym.body,
+        return_type=sym.return_type,
+    )
+
+
+def _try_inline_expand_method_call(
+    analyzer, expr: MethodCall, method
+) -> Optional[InlinedCall]:
+    """Try to expand an inline method call on ``this`` at the call site.
+
+    Same recursion guard / template guard as
+    :func:`_try_inline_expand_call`. The receiver must be
+    :class:`Name` with ``name == "this"`` so the inlined body shares
+    the enclosing scope's ``this`` binding without aliasing.
+
+    ``method`` may be ``None`` if the receiver type has no such
+    method (a regular :class:`TypeError` was already pushed by
+    :func:`_type_check_method_call`); in that case we return
+    ``None`` so the caller can fall back to its normal
+    diagnostic-producing path.
+    """
+    if method is None:
+        return None
+    if not method.inline or method.body is None:
+        return None
+    if method in analyzer.inline_stack:
+        return None
+    if not (isinstance(expr.obj, Name) and expr.obj.name == "this"):
+        return None
+
+    prev_scope = analyzer.current_scope
+    prev_destructs = analyzer.scope_destructs
+    prev_return = analyzer.current_return_type
+    analyzer.current_scope = Scope(prev_scope)
+    analyzer.scope_destructs = []
+    analyzer.current_return_type = method.return_type
+    analyzer.inline_stack.append(method)
+    try:
+        for param_ast, arg in zip(method.ast_params, expr.args):
+            arg_type = get_expression_type(analyzer, arg)
+            if arg_type is None:
+                continue
+            analyzer.current_scope.push_symbol(
+                param_ast.name, VarSymbol(type=arg_type)
+            )
+        check_block(analyzer, method.body)
+    finally:
+        analyzer.inline_stack.pop()
+        analyzer.current_scope = prev_scope
+        analyzer.scope_destructs = prev_destructs
+        analyzer.current_return_type = prev_return
+
+    return InlinedCall(
+        span=expr.span,
+        callee=f"this::{expr.name}",
+        args=tuple(expr.args),
+        block=method.body,
+        return_type=method.return_type,
+    )
 
 
 def _type_check_binary(analyzer, expr: BinaryOp) -> Optional[TypeSymbol]:
